@@ -129,7 +129,7 @@ export class LinkNode extends ElementNode {
   override exportJSON(): SerializedLinkNode {
     const fields = this.getFields()
 
-    if (fields?.linkType === 'internal') {
+    if (fields?.linkType === 'internal' || fields?.linkType === 'upload') {
       delete fields.url
     } else if (fields?.linkType === 'custom') {
       delete fields.doc
@@ -229,7 +229,10 @@ export class LinkNode extends ElementNode {
     if (this.__fields?.linkType === 'upload' && prevNode.__fields?.linkType === 'custom') {
       anchor.removeAttribute('href')
     }
-    if (this.__fields?.linkType === 'custom' && (prevNode.__fields?.linkType === 'internal' || prevNode.__fields?.linkType === 'upload')) {
+    if (
+      this.__fields?.linkType === 'custom' &&
+      (prevNode.__fields?.linkType === 'internal' || prevNode.__fields?.linkType === 'upload')
+    ) {
       if (url) {
         anchor.href = url
       }

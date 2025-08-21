@@ -144,19 +144,194 @@ export function LinkEditor({ anchorElem }: { anchorElem: HTMLElement }): React.R
       setLinkLabel(null)
     } else if (fields?.linkType === 'upload') {
       if (fields.uploadFile) {
-        setLinkUrl(fields.uploadFile.url || '#')
+        /**
+         * Enhanced handling for different uploadFile formats
+         *
+         * The uploadFile field can come in several different formats:
+         * 1. Complete object: { url, filename, alt, id, etc. }
+         * 2. Reference object: { label, relationTo, value }
+         * 3. String ID: "68a64e62a7168c12760fe871"
+         *
+         * This implementation handles all three cases to ensure the LinkEditor
+         * always displays a meaningful name for the uploaded file.
+         */
 
-        const filename =
-          (typeof fields.uploadFile.filename === 'string' ? fields.uploadFile.filename : null) ||
-          (typeof fields.uploadFile.alt === 'string' ? fields.uploadFile.alt : null) ||
-          'Uploaded File'
+        // Define types for different uploadFile structures to help TypeScript
+        type UploadFileWithUrl = {
+          alt?: string
+          filename?: string
+          id?: number | string
+          url: string
+        }
+        type UploadFileWithLabel = {
+          label: string
+          relationTo: string
+          value: { id: string } | string
+        }
 
-        const uploadLabel = t('fields:linkedTo', {
-          label: `Document - ${filename}`,
-        }).replace(/<[^>]*>?/g, '')
+        // Case 1: uploadFile is a complete object with url, filename, etc.
+        if (
+          typeof fields.uploadFile === 'object' &&
+          fields.uploadFile !== null &&
+          'url' in fields.uploadFile
+        ) {
+          // This is the most direct case where we have all the file information
+          const uploadFileWithUrl = fields.uploadFile as UploadFileWithUrl
+          setLinkUrl(uploadFileWithUrl.url || '#')
 
-        setLinkLabel(uploadLabel)
+          // Get the filename with fallbacks to alt or a default value
+          const filename =
+            (typeof uploadFileWithUrl.filename === 'string' ? uploadFileWithUrl.filename : null) ||
+            (typeof uploadFileWithUrl.alt === 'string' ? uploadFileWithUrl.alt : null) ||
+            'Uploaded File'
+
+          const uploadLabel = t('fields:linkedTo', {
+            label: `Document - ${filename}`,
+          }).replace(/<[^>]*>?/g, '')
+
+          setLinkLabel(uploadLabel)
+        }
+        // Case 2: uploadFile is an object with label, relationTo, value structure (like doc field)
+        else if (
+          typeof fields.uploadFile === 'object' &&
+          fields.uploadFile !== null &&
+          'label' in fields.uploadFile
+        ) {
+          // This case matches the structure used by relationship fields
+          const uploadFileWithLabel = fields.uploadFile as UploadFileWithLabel
+
+          // Get the collection name and document ID
+          const collection = uploadFileWithLabel.relationTo || 'media'
+          const id =
+            typeof uploadFileWithLabel.value === 'object'
+              ? uploadFileWithLabel.value.id
+              : uploadFileWithLabel.value
+
+          // Use the label directly if available - this is the most user-friendly approach
+          if (uploadFileWithLabel.label) {
+            const uploadLabel = t('fields:linkedTo', {
+              label: String(uploadFileWithLabel.label),
+            }).replace(/<[^>]*>?/g, '')
+
+            setLinkLabel(uploadLabel)
+          } else {
+            // Set a default label if no label is provided
+            const uploadLabel = t('fields:linkedTo', {
+              label: `Document - ID: ${id}`,
+            }).replace(/<[^>]*>?/g, '')
+
+            setLinkLabel(uploadLabel)
+          }
+
+          // Set a URL to the admin panel as a fallback
+          setLinkUrl(
+            `${config.routes.admin === '/' ? '' : config.routes.admin}/collections/${collection}/${id}`,
+          )
+
+          // Fetch the file information to get the actual URL
+          requests
+            .get(`${config.serverURL}${config.routes.api}/${collection}/${id}`, {
+              headers: {
+                'Accept-Language': i18n.language,
+              },
+              params: {
+                depth: 0,
+                locale: locale?.code,
+              },
+            })
+            .then(async (res) => {
+              if (!res.ok) {
+                throw new Error(`HTTP error! Status: ${res.status}`)
+              }
+              const uploadData = await res.json()
+
+              // Update the URL with the actual file URL if available
+              if (uploadData && uploadData.url) {
+                setLinkUrl(uploadData.url)
+              }
+            })
+            .catch(() => {
+              // Fallback already set above - keep using the admin URL
+            })
+        }
+        // Case 3: uploadFile is just an ID string or other formats
+        else {
+          // This case handles when uploadFile is just a string ID or has an unexpected format
+          // Convert to string regardless of the type to ensure we have a usable ID
+          const uploadFileId =
+            typeof fields.uploadFile === 'string'
+              ? fields.uploadFile
+              : typeof fields.uploadFile === 'object' &&
+                  fields.uploadFile !== null &&
+                  'id' in fields.uploadFile
+                ? String((fields.uploadFile as { id: string }).id)
+                : String(fields.uploadFile)
+
+          // Default collection for uploads
+          const uploadCollection = 'media'
+
+          // Show a loading state while we fetch the file data
+          const loadingLabel = t('fields:linkedTo', {
+            label: `Document - ${t('lexical:link:loadingWithEllipsis', i18n)}`,
+          }).replace(/<[^>]*>?/g, '')
+
+          setLinkLabel(loadingLabel)
+          setLinkUrl('#') // Placeholder URL until we get the real one
+
+          // Fetch file data to get the proper filename and URL
+          requests
+            .get(`${config.serverURL}${config.routes.api}/${uploadCollection}/${uploadFileId}`, {
+              headers: {
+                'Accept-Language': i18n.language,
+              },
+              params: {
+                depth: 0,
+                locale: locale?.code,
+              },
+            })
+            .then(async (res) => {
+              if (!res.ok) {
+                throw new Error(`HTTP error! Status: ${res.status}`)
+              }
+              const uploadData = await res.json()
+
+              // Update URL with the actual file URL
+              if (uploadData && uploadData.url) {
+                setLinkUrl(uploadData.url)
+              }
+
+              // Update label with the actual filename
+              const filename = uploadData.filename || uploadData.alt || 'Uploaded File'
+              const uploadLabel = t('fields:linkedTo', {
+                label: `Document - ${filename}`,
+              }).replace(/<[^>]*>?/g, '')
+
+              setLinkLabel(uploadLabel)
+
+              // Update stateData with the full uploadFile object so it's available for the drawer
+              setStateData((prevData) => {
+                if (prevData) {
+                  return {
+                    ...prevData,
+                    uploadFile: {
+                      ...uploadData,
+                      url: uploadData.url,
+                    },
+                  }
+                }
+                return prevData
+              })
+            })
+            .catch(() => {
+              // Fallback label if request fails - show at least the ID
+              const uploadLabel = t('fields:linkedTo', {
+                label: `Document - ID: ${uploadFileId}`,
+              }).replace(/<[^>]*>?/g, '')
+              setLinkLabel(uploadLabel)
+            })
+        }
       } else {
+        // Case 4: uploadFile is null or undefined - provide a generic placeholder
         setLinkUrl(null)
 
         const uploadLabel = t('fields:linkedTo', {
@@ -167,7 +342,8 @@ export function LinkEditor({ anchorElem }: { anchorElem: HTMLElement }): React.R
       }
     } else {
       // internal link
-      const docValue = typeof fields?.doc?.value === 'object' ? fields.doc.value.id : fields?.doc?.value
+      const docValue =
+        typeof fields?.doc?.value === 'object' ? fields.doc.value.id : fields?.doc?.value
       setLinkUrl(
         `${config.routes.admin === '/' ? '' : config.routes.admin}/collections/${fields?.doc?.relationTo}/${docValue}`,
       )

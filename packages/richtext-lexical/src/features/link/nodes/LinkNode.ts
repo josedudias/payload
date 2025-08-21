@@ -107,9 +107,13 @@ export class LinkNode extends ElementNode {
 
   override createDOM(config: EditorConfig): HTMLAnchorElement {
     const element = document.createElement('a')
+
     if (this.__fields?.linkType === 'custom') {
       element.href = this.sanitizeUrl(this.__fields.url ?? '')
+    } else if (this.__fields?.linkType === 'upload' && this.__fields?.uploadFile) {
+      element.href = this.__fields.uploadFile.url || '#'
     }
+
     if (this.__fields?.newTab ?? false) {
       element.target = '_blank'
     }
@@ -147,7 +151,7 @@ export class LinkNode extends ElementNode {
   override extractWithChild(
     child: LexicalNode,
     selection: BaseSelection,
-    destination: 'clone' | 'html',
+    _destination: 'clone' | 'html',
   ): boolean {
     if (!$isRangeSelection(selection)) {
       return false
@@ -195,7 +199,7 @@ export class LinkNode extends ElementNode {
       if (!SUPPORTED_URL_PROTOCOLS.has(parsedUrl.protocol)) {
         return 'about:blank'
       }
-    } catch (e) {
+    } catch (_e) {
       return 'https://'
     }
     return url
@@ -213,7 +217,7 @@ export class LinkNode extends ElementNode {
     return writable
   }
 
-  override updateDOM(prevNode: this, anchor: HTMLAnchorElement, config: EditorConfig): boolean {
+  override updateDOM(prevNode: this, anchor: HTMLAnchorElement, _config: EditorConfig): boolean {
     const url = this.__fields?.url
     const newTab = this.__fields?.newTab
     if (url != null && url !== prevNode.__fields?.url && this.__fields?.linkType === 'custom') {
@@ -221,6 +225,18 @@ export class LinkNode extends ElementNode {
     }
     if (this.__fields?.linkType === 'internal' && prevNode.__fields?.linkType === 'custom') {
       anchor.removeAttribute('href')
+    }
+    if (this.__fields?.linkType === 'upload' && prevNode.__fields?.linkType === 'custom') {
+      anchor.removeAttribute('href')
+    }
+    if (this.__fields?.linkType === 'custom' && (prevNode.__fields?.linkType === 'internal' || prevNode.__fields?.linkType === 'upload')) {
+      if (url) {
+        anchor.href = url
+      }
+    }
+    if (this.__fields?.linkType === 'upload' && this.__fields?.uploadFile) {
+      // Update href for upload links
+      anchor.href = this.__fields.uploadFile.url || '#'
     }
 
     // TODO: not 100% sure why we're settign rel to '' - revisit

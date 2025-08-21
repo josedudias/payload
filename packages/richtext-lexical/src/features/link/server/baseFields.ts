@@ -17,6 +17,7 @@ export const getBaseFields = (
   enabledCollections?: CollectionSlug[],
   disabledCollections?: CollectionSlug[],
   maxDepth?: number,
+  enabledUploadFileCollection?: CollectionSlug[],
 ): FieldAffectingData[] => {
   let enabledRelations: CollectionSlug[]
 
@@ -40,6 +41,22 @@ export const getBaseFields = (
       })
       .map(({ slug }) => slug)
   }
+
+  /**
+   * Check which upload collections are enabled for linking
+   */
+  const enabledUploadCollections = enabledUploadFileCollection?.filter((slug) =>
+    config.collections.some((collection) =>
+      collection.slug === slug && collection.upload
+    )
+  ) || []
+
+  /**
+   * Determine the upload relationTo - use first enabled collection or default to 'media' if available
+   */
+  const uploadRelationTo = enabledUploadCollections.length > 0
+    ? enabledUploadCollections[0]
+    : config.collections.find(collection => collection.slug === 'media' && collection.upload)?.slug
 
   const baseFields: FieldAffectingData[] = [
     {
@@ -84,8 +101,8 @@ export const getBaseFields = (
       label: ({ t }) => t('fields:enterURL'),
       required: true,
       validate: ((value: string, options) => {
-        if ((options?.siblingData as LinkFields)?.linkType === 'internal') {
-          return // no validation needed, as no url should exist for internal links
+        if ((options?.siblingData as LinkFields)?.linkType === 'internal' || (options?.siblingData as LinkFields)?.linkType === 'upload') {
+          return // no validation needed, as no url should exist for internal links or uploads
         }
         if (!validateUrlMinimal(value)) {
           return 'Invalid URL'
@@ -94,18 +111,58 @@ export const getBaseFields = (
     },
   ]
 
-  // Only display internal link-specific fields / options / conditions if there are enabled relations
+  /**
+   * Only display internal link-specific fields / options / conditions if there are enabled relations
+   */
   if (enabledRelations?.length) {
-    ;(baseFields[1] as RadioField).options.push({
+    ; (baseFields[1] as RadioField).options.push({
       label: ({ t }) => t('fields:internalLink'),
       value: 'internal',
     })
-    ;(baseFields[2] as TextField).admin = {
-      condition: (_data, _siblingData) => {
-        return _siblingData.linkType !== 'internal'
-      },
-    }
+  }
 
+  /**
+   * Only add upload option if there are enabled upload collections
+   */
+  if (enabledUploadCollections.length > 0) {
+    ; (baseFields[1] as RadioField).options.push({
+      label: 'Upload File',
+      value: 'upload',
+    })
+  }
+
+  /**
+   * Update URL field condition to exclude both internal and upload
+   */
+  ; (baseFields[2] as TextField).admin = {
+    condition: (_data, _siblingData) => {
+      return _siblingData.linkType === 'custom'
+    },
+  }
+
+  /**
+   * Add upload field for media files when linkType is 'upload'
+   */
+  if (enabledUploadCollections.length > 0) {
+    baseFields.push({
+      name: 'uploadFile',
+      type: 'upload',
+      admin: {
+        condition: (_data, _siblingData) => {
+          return _siblingData.linkType === 'upload'
+        },
+        description: 'Upload a new file to create a link to it',
+      },
+      label: 'Upload New File',
+      relationTo: uploadRelationTo!,
+      required: false,
+    })
+  }
+
+  /**
+   * Add doc field only for internal links (not for uploads)
+   */
+  if (enabledRelations?.length) {
     baseFields.push({
       name: 'doc',
       admin: {
@@ -115,21 +172,23 @@ export const getBaseFields = (
       },
       // when admin.hidden is a function we need to dynamically call hidden with the user to know if the collection should be shown
       type: 'relationship',
-      filterOptions:
-        !enabledCollections && !disabledCollections
-          ? ({ relationTo, user }) => {
-              const hidden = config.collections.find(({ slug }) => slug === relationTo)?.admin
-                .hidden
-              if (typeof hidden === 'function' && hidden({ user } as { user: User })) {
-                return false
-              }
-              return true
-            }
-          : null,
-      label: ({ t }) => t('fields:chooseDocumentToLink'),
+      filterOptions: ({ relationTo, user }) => {
+        // For internal type, show enabled collections but not media
+        if (relationTo === 'media') {
+          return false
+        }
+        if (!enabledCollections && !disabledCollections) {
+          const hidden = config.collections.find(({ slug }) => slug === relationTo)?.admin.hidden
+          if (typeof hidden === 'function' && hidden({ user } as { user: User })) {
+            return false
+          }
+        }
+        return true
+      },
+      label: 'Choose document to link',
       maxDepth,
       relationTo: enabledRelations,
-      required: true,
+      required: false,
     })
   }
 

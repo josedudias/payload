@@ -26,25 +26,25 @@ import { linkValidation } from './validate.js'
 
 export type ExclusiveLinkCollectionsProps =
   | {
-      /**
-       * The collections that should be disabled for internal linking. Overrides the `enableRichTextLink` property in the collection config.
-       * When this property is set, `enabledCollections` will not be available.
-       **/
-      disabledCollections?: CollectionSlug[]
+    /**
+     * The collections that should be disabled for internal linking. Overrides the `enableRichTextLink` property in the collection config.
+     * When this property is set, `enabledCollections` will not be available.
+     **/
+    disabledCollections?: CollectionSlug[]
 
-      // Ensures that enabledCollections is not available when disabledCollections is set
-      enabledCollections?: never
-    }
+    // Ensures that enabledCollections is not available when disabledCollections is set
+    enabledCollections?: never
+  }
   | {
-      // Ensures that disabledCollections is not available when enabledCollections is set
-      disabledCollections?: never
+    // Ensures that disabledCollections is not available when enabledCollections is set
+    disabledCollections?: never
 
-      /**
-       * The collections that should be enabled for internal linking. Overrides the `enableRichTextLink` property in the collection config
-       * When this property is set, `disabledCollections` will not be available.
-       **/
-      enabledCollections?: CollectionSlug[]
-    }
+    /**
+     * The collections that should be enabled for internal linking. Overrides the `enableRichTextLink` property in the collection config
+     * When this property is set, `disabledCollections` will not be available.
+     **/
+    enabledCollections?: CollectionSlug[]
+  }
 
 export type LinkFeatureServerProps = {
   /**
@@ -58,15 +58,23 @@ export type LinkFeatureServerProps = {
    */
   disableAutoLinks?: 'creationOnly' | true
   /**
+   * The collections that should be enabled for upload file linking. Only collections
+   * with upload configuration will work properly.
+   * If not specified, no upload option will be available.
+   *
+   * @example ['media', 'files']
+   */
+  enabledUploadFileCollection?: CollectionSlug[]
+  /**
    * A function or array defining additional fields for the link feature. These will be
    * displayed in the link editor drawer.
    */
   fields?:
-    | ((args: {
-        config: SanitizedConfig
-        defaultFields: FieldAffectingData[]
-      }) => (Field | FieldAffectingData)[])
-    | Field[]
+  | ((args: {
+    config: SanitizedConfig
+    defaultFields: FieldAffectingData[]
+  }) => (Field | FieldAffectingData)[])
+  | Field[]
   /**
    * Sets a maximum population depth for the internal doc default field of link, regardless of the remaining depth when the field is reached.
    * This behaves exactly like the maxDepth properties of relationship and upload fields.
@@ -93,6 +101,7 @@ export const LinkFeature = createServerFeature<
       props.enabledCollections,
       props.disabledCollections,
       props.maxDepth,
+      props.enabledUploadFileCollection,
     )
 
     const sanitizedFields = await sanitizeFields({
@@ -144,6 +153,7 @@ export const LinkFeature = createServerFeature<
         disableAutoLinks: props.disableAutoLinks,
         disabledCollections: props.disabledCollections,
         enabledCollections: props.enabledCollections,
+        enabledUploadFileCollection: props.enabledUploadFileCollection,
       } as ClientProps,
       generateSchemaMap: () => {
         if (!sanitizedFields || !Array.isArray(sanitizedFields) || sanitizedFields.length === 0) {
@@ -163,51 +173,55 @@ export const LinkFeature = createServerFeature<
         props?.disableAutoLinks === true
           ? null
           : createNode({
-              converters: {
-                html: {
-                  converter: async ({
+            converters: {
+              html: {
+                converter: async ({
+                  converters,
+                  currentDepth,
+                  depth,
+                  draft,
+                  node,
+                  overrideAccess,
+                  parent,
+                  req,
+                  showHiddenFields,
+                }) => {
+                  const childrenText = await convertLexicalNodesToHTML({
                     converters,
                     currentDepth,
                     depth,
                     draft,
-                    node,
+                    lexicalNodes: node.children,
                     overrideAccess,
-                    parent,
+                    parent: {
+                      ...node,
+                      parent,
+                    },
                     req,
                     showHiddenFields,
-                  }) => {
-                    const childrenText = await convertLexicalNodesToHTML({
-                      converters,
-                      currentDepth,
-                      depth,
-                      draft,
-                      lexicalNodes: node.children,
-                      overrideAccess,
-                      parent: {
-                        ...node,
-                        parent,
-                      },
-                      req,
-                      showHiddenFields,
-                    })
+                  })
 
-                    let href: string = node.fields.url ?? ''
-                    if (node.fields.linkType === 'internal') {
-                      href =
-                        typeof node.fields.doc?.value !== 'object'
-                          ? String(node.fields.doc?.value)
-                          : String(node.fields.doc?.value?.id)
-                    }
+                  let href: string = node.fields.url ?? ''
+                  if (node.fields.linkType === 'internal') {
+                    href =
+                      typeof node.fields.doc?.value !== 'object'
+                        ? String(node.fields.doc?.value)
+                        : String(node.fields.doc?.value?.id)
+                  } else if (node.fields.linkType === 'upload' && node.fields.doc?.value) {
+                    // For upload links, use the URL from the media document
+                    const mediaDoc = typeof node.fields.doc.value === 'object' ? node.fields.doc.value : null
+                    href = mediaDoc && mediaDoc.url && typeof mediaDoc.url === 'string' ? mediaDoc.url : '#'
+                  }
 
-                    return `<a href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>${childrenText}</a>`
-                  },
-                  nodeTypes: [AutoLinkNode.getType()],
+                  return `<a href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>${childrenText}</a>`
                 },
+                nodeTypes: [AutoLinkNode.getType()],
               },
-              node: AutoLinkNode,
-              // Since AutoLinkNodes are just internal links, they need no hooks or graphQL population promises
-              validations: [linkValidation(props, sanitizedFieldsWithoutText)],
-            }),
+            },
+            node: AutoLinkNode,
+            // Since AutoLinkNodes are just internal links, they need no hooks or graphQL population promises
+            validations: [linkValidation(props, sanitizedFieldsWithoutText)],
+          }),
         createNode({
           converters: {
             html: {
@@ -240,7 +254,12 @@ export const LinkFeature = createServerFeature<
                 const href: string =
                   node.fields.linkType === 'custom'
                     ? escapeHTML(node.fields.url)
-                    : (node.fields.doc?.value as string)
+                    : node.fields.linkType === 'upload' && node.fields.doc?.value
+                      ? (() => {
+                        const mediaDoc = typeof node.fields.doc.value === 'object' ? node.fields.doc.value : null
+                        return mediaDoc && mediaDoc.url && typeof mediaDoc.url === 'string' ? mediaDoc.url : '#'
+                      })()
+                      : (node.fields.doc?.value as string)
 
                 return `<a href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>${childrenText}</a>`
               },

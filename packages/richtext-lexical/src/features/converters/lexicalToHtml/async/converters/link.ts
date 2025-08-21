@@ -28,6 +28,7 @@ export const LinkHTMLConverterAsync: (args: {
     ).join('')
 
     let href: string = node.fields.url ?? ''
+
     if (node.fields.linkType === 'internal') {
       if (internalDocToHref) {
         href = await internalDocToHref({ linkNode: node, populate })
@@ -37,6 +38,8 @@ export const LinkHTMLConverterAsync: (args: {
         )
         href = '#' // fallback
       }
+    } else if (node.fields.linkType === 'upload' && node.fields.uploadFile) {
+      href = node.fields.uploadFile.url || '#'
     }
 
     return `<a${providedStyleTag} href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>

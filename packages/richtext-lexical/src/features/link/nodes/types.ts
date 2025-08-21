@@ -6,15 +6,31 @@ export type LinkFields = {
   doc?: {
     relationTo: string
     value:
-      | {
-          // Actual doc data, populated in afterRead hook
-          [key: string]: JsonValue
-          id: DefaultDocumentIDType
-        }
-      | DefaultDocumentIDType
+    | {
+      /**
+       * Actual doc data, populated in afterRead hook
+       */
+      [key: string]: JsonValue
+      id: DefaultDocumentIDType
+    }
+    | DefaultDocumentIDType
   } | null
-  linkType: 'custom' | 'internal'
+  linkType: 'custom' | 'internal' | 'upload'
   newTab: boolean
+  uploadFile?: {
+    /**
+     * Media file data for upload links
+     */
+    [key: string]: JsonValue
+    alt?: string
+    filename?: string
+    filesize?: number
+    height?: number
+    id: DefaultDocumentIDType
+    mimeType?: string
+    url: string
+    width?: number
+  } | null
   url?: string
 }
 

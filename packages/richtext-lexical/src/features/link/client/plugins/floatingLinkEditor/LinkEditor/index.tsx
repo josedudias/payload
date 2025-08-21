@@ -142,12 +142,34 @@ export function LinkEditor({ anchorElem }: { anchorElem: HTMLElement }): React.R
     if (fields?.linkType === 'custom') {
       setLinkUrl(fields?.url ?? null)
       setLinkLabel(null)
+    } else if (fields?.linkType === 'upload') {
+      if (fields.uploadFile) {
+        setLinkUrl(fields.uploadFile.url || '#')
+
+        const filename =
+          (typeof fields.uploadFile.filename === 'string' ? fields.uploadFile.filename : null) ||
+          (typeof fields.uploadFile.alt === 'string' ? fields.uploadFile.alt : null) ||
+          'Uploaded File'
+
+        const uploadLabel = t('fields:linkedTo', {
+          label: `Document - ${filename}`,
+        }).replace(/<[^>]*>?/g, '')
+
+        setLinkLabel(uploadLabel)
+      } else {
+        setLinkUrl(null)
+
+        const uploadLabel = t('fields:linkedTo', {
+          label: 'Document - Uploaded File',
+        }).replace(/<[^>]*>?/g, '')
+
+        setLinkLabel(uploadLabel)
+      }
     } else {
       // internal link
+      const docValue = typeof fields?.doc?.value === 'object' ? fields.doc.value.id : fields?.doc?.value
       setLinkUrl(
-        `${config.routes.admin === '/' ? '' : config.routes.admin}/collections/${fields?.doc?.relationTo}/${
-          fields?.doc?.value
-        }`,
+        `${config.routes.admin === '/' ? '' : config.routes.admin}/collections/${fields?.doc?.relationTo}/${docValue}`,
       )
 
       const relatedField = fields?.doc?.relationTo
@@ -156,7 +178,7 @@ export function LinkEditor({ anchorElem }: { anchorElem: HTMLElement }): React.R
       if (!relatedField) {
         // Usually happens if the user removed all default fields. In this case, we let them specify the label or do not display the label at all.
         // label could be a virtual field the user added. This is useful if they want to use the link feature for things other than links.
-        setLinkLabel(fields?.label ? String(fields?.label) : null)
+        setLinkLabel(fields?.label && typeof fields.label === 'string' ? fields.label : null)
         setLinkUrl(fields?.url ? String(fields?.url) : null)
       } else {
         const id = typeof fields.doc?.value === 'object' ? fields.doc.value.id : fields.doc?.value

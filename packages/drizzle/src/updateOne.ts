@@ -18,16 +18,18 @@ export const updateOne: UpdateOne = async function updateOne(
     data,
     joins: joinQuery,
     locale,
+    options = { upsert: false },
     req,
     returning,
     select,
     where: whereArg,
   },
 ) {
-  const db = await getTransaction(this, req)
   const collection = this.payload.collections[collectionSlug].config
   const tableName = this.tableNameMap.get(toSnakeCase(collection.slug))
   let idToUpdate = id
+
+  const db = await getTransaction(this, req)
 
   if (!idToUpdate) {
     const { joins, selectFields, where } = buildQuery({
@@ -64,6 +66,13 @@ export const updateOne: UpdateOne = async function updateOne(
         .limit(1)
       idToUpdate = docsToUpdate?.[0]?.id
     }
+  }
+
+  if (!idToUpdate && !options.upsert) {
+    // TODO: In 4.0, if returning === false, we should differentiate between:
+    // - No document found to update
+    // - Document found, but returning === false
+    return null
   }
 
   const result = await upsertRow({

@@ -47,7 +47,19 @@ describe('Sort functionality', () => {
   // eslint-disable-next-line playwright/expect-expect
   test('Orderable collection', async () => {
     const url = new AdminUrlUtil(serverURL, orderableSlug)
+    await page.goto(url.list)
+
+    const joinFieldResolvePromise = page.waitForResponse(
+      (response) => response.url().includes('/api/orderable-join') && response.status() === 200,
+    )
+    const seedResponsePromise = page.waitForResponse(
+      (response) => response.url().includes('/api/seed') && response.status() === 200,
+    )
+    await page.locator('.collection-list button', { hasText: 'Seed' }).click()
+    await seedResponsePromise
+    await joinFieldResolvePromise
     await page.goto(`${url.list}?sort=-_order`)
+
     // SORT BY ORDER ASCENDING
     await page.locator('.sort-header button').nth(0).click()
     await assertRows(0, 'A', 'B', 'C', 'D')
@@ -58,16 +70,11 @@ describe('Sort functionality', () => {
     await moveRow(1, 4) // move to bottom
     await assertRows(0, 'A', 'C', 'D', 'B')
 
-    // SORT BY ORDER DESCENDING
+    // Click the sort button again should not change the order
+    // Note: In previous versions we allowed ascending and descending order.
     await page.locator('.sort-header button').nth(0).click()
-    await page.waitForURL(/sort=-_order/, { timeout: 2000 })
-    await assertRows(0, 'B', 'D', 'C', 'A')
-    await moveRow(1, 3) // move to middle
-    await assertRows(0, 'D', 'C', 'B', 'A')
-    await moveRow(3, 1) // move to top
-    await assertRows(0, 'B', 'D', 'C', 'A')
-    await moveRow(1, 4) // move to bottom
-    await assertRows(0, 'D', 'C', 'A', 'B')
+    await page.waitForURL(/sort=_order/, { timeout: 2000 })
+    await assertRows(0, 'A', 'C', 'D', 'B')
 
     // SORT BY TITLE
     await page.getByLabel('Sort by Title Ascending').click()

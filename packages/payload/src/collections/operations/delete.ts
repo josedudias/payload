@@ -18,9 +18,11 @@ import { APIError } from '../../errors/index.js'
 import { afterRead } from '../../fields/hooks/afterRead/index.js'
 import { deleteUserPreferences } from '../../preferences/deleteUserPreferences.js'
 import { deleteAssociatedFiles } from '../../uploads/deleteAssociatedFiles.js'
+import { appendNonTrashedFilter } from '../../utilities/appendNonTrashedFilter.js'
 import { checkDocumentLockStatus } from '../../utilities/checkDocumentLockStatus.js'
 import { commitTransaction } from '../../utilities/commitTransaction.js'
 import { initTransaction } from '../../utilities/initTransaction.js'
+import { isErrorPublic } from '../../utilities/isErrorPublic.js'
 import { killTransaction } from '../../utilities/killTransaction.js'
 import { sanitizeSelect } from '../../utilities/sanitizeSelect.js'
 import { deleteCollectionVersions } from '../../versions/deleteCollectionVersions.js'
@@ -37,6 +39,7 @@ export type Arguments = {
   req: PayloadRequest
   select?: SelectType
   showHiddenFields?: boolean
+  trash?: boolean
   where: Where
 }
 
@@ -82,6 +85,7 @@ export const deleteOperation = async <
       req,
       select: incomingSelect,
       showHiddenFields,
+      trash = false,
       where,
     } = args
 
@@ -106,7 +110,14 @@ export const deleteOperation = async <
       where,
     })
 
-    const fullWhere = combineQueries(where, accessResult!)
+    let fullWhere = combineQueries(where, accessResult!)
+
+    // Exclude trashed documents when trash: false
+    fullWhere = appendNonTrashedFilter({
+      enableTrash: collectionConfig.trash,
+      trash,
+      where: fullWhere,
+    })
 
     sanitizeWhereQuery({ fields: collectionConfig.flattenedFields, payload, where: fullWhere })
 
@@ -128,7 +139,7 @@ export const deleteOperation = async <
       where: fullWhere,
     })
 
-    const errors: { id: number | string; message: string }[] = []
+    const errors: BulkOperationResult<TSlug, TSelect>['errors'] = []
 
     const promises = docs.map(async (doc) => {
       let result
@@ -271,8 +282,11 @@ export const deleteOperation = async <
 
         return result
       } catch (error) {
+        const isPublic = error instanceof Error ? isErrorPublic(error, config) : false
+
         errors.push({
           id: doc.id,
+          isPublic,
           message: error instanceof Error ? error.message : 'Unknown error',
         })
       }

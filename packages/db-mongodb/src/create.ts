@@ -15,11 +15,11 @@ export const create: Create = async function create(
 ) {
   const { collectionConfig, customIDType, Model } = getCollection({ adapter: this, collectionSlug })
 
-  const options: CreateOptions = {
-    session: await getSession(this, req),
-  }
-
   let doc
+
+  if (!data.createdAt) {
+    data.createdAt = new Date().toISOString()
+  }
 
   transform({
     adapter: this,
@@ -39,6 +39,12 @@ export const create: Create = async function create(
       )
       throw error
     }
+  }
+
+  const options: CreateOptions = {
+    session: await getSession(this, req),
+    // Timestamps are manually added by the write transform
+    timestamps: false,
   }
 
   try {

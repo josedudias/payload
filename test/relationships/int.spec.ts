@@ -17,6 +17,7 @@ import type {
 } from './payload-types.js'
 
 import { initPayloadInt } from '../helpers/initPayloadInt.js'
+import { mongooseList } from '../helpers/isMongoose.js'
 import {
   chainedRelSlug,
   customIdNumberSlug,
@@ -38,7 +39,7 @@ const dirname = path.dirname(filename)
 
 type EasierChained = { id: string; relation: EasierChained }
 
-const mongoIt = process.env.PAYLOAD_DATABASE === 'mongodb' ? it : it.skip
+const mongoIt = mongooseList.includes(process.env.PAYLOAD_DATABASE || '') ? it : it.skip
 
 describe('Relationships', () => {
   beforeAll(async () => {
@@ -791,6 +792,86 @@ describe('Relationships', () => {
           expect(localized_res_2.docs).toStrictEqual([movie_1, movie_2])
         })
 
+        it('should sort by a property of a nested relationship', async () => {
+          await payload.delete({ collection: 'directors', where: {} })
+          await payload.delete({ collection: 'movies', where: {} })
+
+          const director = await payload.create({ collection: 'directors', data: {} })
+
+          const movie = await payload.create({
+            collection: 'movies',
+            data: { director: director.id, name: 'movie 1' },
+          })
+
+          await payload.update({
+            collection: 'directors',
+            id: director.id,
+            data: { movie: movie.id },
+          })
+
+          const director_2 = await payload.create({ collection: 'directors', data: {} })
+
+          const movie_2 = await payload.create({
+            collection: 'movies',
+            data: { director: director_2.id, name: 'movie 2' },
+          })
+
+          await payload.update({
+            collection: 'directors',
+            id: director_2.id,
+            data: { movie: movie_2.id },
+          })
+
+          const res = await payload.find({ collection: 'movies', sort: 'director.movie.name' })
+          expect(res.docs[0].id).toBe(movie.id)
+          expect(res.docs[1].id).toBe(movie_2.id)
+
+          const res_2 = await payload.find({ collection: 'movies', sort: '-director.movie.name' })
+          expect(res_2.docs[0].id).toBe(movie_2.id)
+          expect(res_2.docs[1].id).toBe(movie.id)
+        })
+
+        it('should sort by multiple properties of a relationship', async () => {
+          await payload.delete({ collection: 'directors', where: {} })
+          await payload.delete({ collection: 'movies', where: {} })
+
+          const createDirector = {
+            collection: 'directors',
+            data: {
+              name: 'Dan',
+            },
+          } as const
+
+          const director_1 = await payload.create(createDirector)
+          const director_2 = await payload.create(createDirector)
+
+          const movie_1 = await payload.create({
+            collection: 'movies',
+            depth: 0,
+            data: { director: director_1.id, name: 'Some Movie 1' },
+          })
+
+          const movie_2 = await payload.create({
+            collection: 'movies',
+            depth: 0,
+            data: { director: director_2.id, name: 'Some Movie 2' },
+          })
+
+          const res_1 = await payload.find({
+            collection: 'movies',
+            sort: ['director.name', 'director.createdAt'],
+            depth: 0,
+          })
+          const res_2 = await payload.find({
+            collection: 'movies',
+            sort: ['director.name', '-director.createdAt'],
+            depth: 0,
+          })
+
+          expect(res_1.docs).toStrictEqual([movie_1, movie_2])
+          expect(res_2.docs).toStrictEqual([movie_2, movie_1])
+        })
+
         it('should sort by a property of a hasMany relationship', async () => {
           const movie1 = await payload.create({
             collection: 'movies',
@@ -1149,6 +1230,47 @@ describe('Relationships', () => {
 
       expect(result.totalDocs).toBe(1)
       expect(result.docs[0]!.id).toBe(doc.id)
+    })
+
+    it('should allow querying polymorphic in an array', async () => {
+      const director = await payload.create({
+        collection: 'directors',
+        data: { name: 'direcotr' },
+      })
+      const movie = await payload.create({
+        collection: 'movies',
+        data: { array: [{ polymorphic: { relationTo: 'directors', value: director.id } }] },
+      })
+
+      const res = await payload.find({
+        collection: 'movies',
+        where: { 'array.polymorphic': { equals: { value: director.id, relationTo: 'directors' } } },
+      })
+      expect(res.docs).toHaveLength(1)
+      expect(res.docs[0].id).toBe(movie.id)
+    })
+
+    it('should allow querying hasMany in array', async () => {
+      const director = await payload.create({
+        collection: 'directors',
+        data: { name: 'Test Director1337' },
+      })
+      const movie = await payload.create({
+        collection: 'movies',
+        data: { array: [{ director: [director.id] }] },
+      })
+      const res = await payload.find({
+        collection: 'movies',
+        where: { 'array.director': { equals: director.id } },
+      })
+      expect(res.docs).toHaveLength(1)
+      expect(res.docs[0].id).toBe(movie.id)
+      const res2 = await payload.find({
+        collection: 'movies',
+        where: { 'array.director.name': { equals: 'Test Director1337' } },
+      })
+      expect(res2.docs).toHaveLength(1)
+      expect(res2.docs[0].id).toBe(movie.id)
     })
 
     describe('Nested Querying Separate Collections', () => {

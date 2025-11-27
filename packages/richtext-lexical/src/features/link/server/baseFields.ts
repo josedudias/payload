@@ -5,7 +5,7 @@ import type {
   SanitizedConfig,
   TextField,
   TextFieldSingleValidation,
-  User,
+  TypedUser,
 } from 'payload'
 
 import type { LinkFields } from '../nodes/types.js'
@@ -172,20 +172,28 @@ export const getBaseFields = (
       },
       // when admin.hidden is a function we need to dynamically call hidden with the user to know if the collection should be shown
       type: 'relationship',
-      filterOptions: ({ relationTo, user }) => {
-        // For internal type, show enabled collections but not media
-        if (relationTo === 'media') {
-          return false
-        }
-        if (!enabledCollections && !disabledCollections) {
-          const hidden = config.collections.find(({ slug }) => slug === relationTo)?.admin.hidden
-          if (typeof hidden === 'function' && hidden({ user } as { user: User })) {
-            return false
-          }
-        }
-        return true
-      },
-      label: 'Choose document to link',
+      filterOptions:
+        !enabledCollections && !disabledCollections
+          ? async ({ relationTo, req, user }) => {
+              const admin = config.collections.find(({ slug }) => slug === relationTo)?.admin
+
+              const hidden = admin?.hidden
+              if (typeof hidden === 'function' && hidden({ user } as { user: TypedUser })) {
+                return false
+              }
+
+              const baseFilter = admin?.baseFilter ?? admin?.baseListFilter
+              return (
+                (await baseFilter?.({
+                  limit: 0,
+                  page: 1,
+                  req,
+                  sort: 'id',
+                })) ?? true
+              )
+            }
+          : null,
+      label: ({ t }) => t('fields:chooseDocumentToLink'),
       maxDepth,
       relationTo: enabledRelations,
       required: false,

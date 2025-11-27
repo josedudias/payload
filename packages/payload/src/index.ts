@@ -15,7 +15,7 @@ import type { AuthArgs } from './auth/operations/auth.js'
 import type { Result as ForgotPasswordResult } from './auth/operations/forgotPassword.js'
 import type { Result as LoginResult } from './auth/operations/login.js'
 import type { Result as ResetPasswordResult } from './auth/operations/resetPassword.js'
-import type { AuthStrategy, User } from './auth/types.js'
+import type { AuthStrategy, UntypedUser } from './auth/types.js'
 import type {
   BulkOperationResult,
   Collection,
@@ -40,7 +40,7 @@ import {
 } from './auth/operations/local/verifyEmail.js'
 export type { FieldState } from './admin/forms/Form.js'
 import type { InitOptions, SanitizedConfig } from './config/types.js'
-import type { BaseDatabaseAdapter, PaginatedDocs } from './database/types.js'
+import type { BaseDatabaseAdapter, PaginatedDistinctDocs, PaginatedDocs } from './database/types.js'
 import type { InitializedEmailAdapter } from './email/types.js'
 import type { DataFromGlobalSlug, Globals, SelectFromGlobalSlug } from './globals/config/types.js'
 import type {
@@ -72,6 +72,10 @@ import {
   findByIDLocal,
   type Options as FindByIDOptions,
 } from './collections/operations/local/findByID.js'
+import {
+  findDistinct as findDistinctLocal,
+  type Options as FindDistinctOptions,
+} from './collections/operations/local/findDistinct.js'
 import {
   findVersionByIDLocal,
   type Options as FindVersionByIDOptions,
@@ -120,6 +124,7 @@ import type { SupportedLanguages } from '@payloadcms/translations'
 import { Cron } from 'croner'
 
 import type { ClientConfig } from './config/client.js'
+import type { KVAdapter } from './kv/index.js'
 import type { BaseJob } from './queues/config/types/workflowTypes.js'
 import type { TypeWithVersion } from './versions/types.js'
 
@@ -133,6 +138,7 @@ import { countVersionsLocal } from './collections/operations/local/countVersions
 import { consoleEmailAdapter } from './email/consoleEmailAdapter.js'
 import { fieldAffectsData, type FlattenedBlock } from './fields/config/types.js'
 import { getJobsLocalAPI } from './queues/localAPI.js'
+import { _internal_jobSystemGlobals } from './queues/utilities/getCurrentDate.js'
 import { isNextBuild } from './utilities/isNextBuild.js'
 import { getLogger } from './utilities/logger.js'
 import { serverInit as serverInitTelemetry } from './utilities/telemetry/events/serverInit.js'
@@ -156,7 +162,6 @@ export { extractAccessFromPermission } from './auth/extractAccessFromPermission.
 export { getAccessResults } from './auth/getAccessResults.js'
 export { getFieldsToSign } from './auth/getFieldsToSign.js'
 export { getLoginOptions } from './auth/getLoginOptions.js'
-
 export interface GeneratedTypes {
   authUntyped: {
     [slug: string]: {
@@ -195,10 +200,10 @@ export interface GeneratedTypes {
   dbUntyped: {
     defaultIDType: number | string
   }
+  fallbackLocaleUntyped: 'false' | 'none' | 'null' | ({} & string)[] | ({} & string) | false | null
   globalsSelectUntyped: {
     [slug: string]: SelectType
   }
-
   globalsUntyped: {
     [slug: string]: JsonObject
   }
@@ -216,7 +221,7 @@ export interface GeneratedTypes {
     }
   }
   localeUntyped: null | string
-  userUntyped: User
+  userUntyped: UntypedUser
 }
 
 // Helper type to resolve the correct type using conditional types
@@ -295,10 +300,20 @@ export type GlobalSlug = StringKeyOf<TypedGlobal>
 
 // @ts-expect-error
 type ResolveLocaleType<T> = 'locale' extends keyof T ? T['locale'] : T['localeUntyped']
+type ResolveFallbackLocaleType<T> = 'fallbackLocale' extends keyof T
+  ? T['fallbackLocale']
+  : // @ts-expect-error
+    T['fallbackLocaleUntyped']
 // @ts-expect-error
 type ResolveUserType<T> = 'user' extends keyof T ? T['user'] : T['userUntyped']
 
 export type TypedLocale = ResolveLocaleType<GeneratedTypes>
+
+export type TypedFallbackLocale = ResolveFallbackLocaleType<GeneratedTypes>
+
+/**
+ * @todo rename to `User` in 4.0
+ */
 export type TypedUser = ResolveUserType<GeneratedTypes>
 
 // @ts-expect-error
@@ -461,6 +476,20 @@ export class BasePayload {
     return findByIDLocal<TSlug, TDisableErrors, TSelect>(this, options)
   }
 
+  /**
+   * @description Find distinct field values
+   * @param options
+   * @returns result with distinct field values
+   */
+  findDistinct = async <
+    TSlug extends CollectionSlug,
+    TField extends keyof DataFromCollectionSlug<TSlug> & string,
+  >(
+    options: FindDistinctOptions<TSlug, TField>,
+  ): Promise<PaginatedDistinctDocs<Record<TField, DataFromCollectionSlug<TSlug>[TField]>>> => {
+    return findDistinctLocal(this, options)
+  }
+
   findGlobal = async <TSlug extends GlobalSlug, TSelect extends SelectFromGlobalSlug<TSlug>>(
     options: FindGlobalOptions<TSlug, TSelect>,
   ): Promise<TransformGlobalWithSelect<TSlug, TSelect>> => {
@@ -526,6 +555,11 @@ export class BasePayload {
   importMap!: ImportMap
 
   jobs = getJobsLocalAPI(this)
+
+  /**
+   * Key Value storage
+   */
+  kv!: KVAdapter
 
   logger!: Logger
 
@@ -602,6 +636,64 @@ export class BasePayload {
   versions: {
     [slug: string]: any // TODO: Type this
   } = {}
+
+  async _initializeCrons() {
+    if (this.config.jobs.enabled && this.config.jobs.autoRun && !isNextBuild()) {
+      const DEFAULT_CRON = '* * * * *'
+      const DEFAULT_LIMIT = 10
+
+      const cronJobs =
+        typeof this.config.jobs.autoRun === 'function'
+          ? await this.config.jobs.autoRun(this)
+          : this.config.jobs.autoRun
+
+      await Promise.all(
+        cronJobs.map((cronConfig) => {
+          const jobAutorunCron = new Cron(
+            cronConfig.cron ?? DEFAULT_CRON,
+            async () => {
+              if (
+                _internal_jobSystemGlobals.shouldAutoSchedule &&
+                !cronConfig.disableScheduling &&
+                this.config.jobs.scheduling
+              ) {
+                await this.jobs.handleSchedules({
+                  allQueues: cronConfig.allQueues,
+                  queue: cronConfig.queue,
+                })
+              }
+
+              if (!_internal_jobSystemGlobals.shouldAutoRun) {
+                return
+              }
+
+              if (typeof this.config.jobs.shouldAutoRun === 'function') {
+                const shouldAutoRun = await this.config.jobs.shouldAutoRun(this)
+
+                if (!shouldAutoRun) {
+                  jobAutorunCron.stop()
+                  return
+                }
+              }
+
+              await this.jobs.run({
+                allQueues: cronConfig.allQueues,
+                limit: cronConfig.limit ?? DEFAULT_LIMIT,
+                queue: cronConfig.queue,
+                silent: cronConfig.silent,
+              })
+            },
+            {
+              // Do not run consecutive crons if previous crons still ongoing
+              protect: true,
+            },
+          )
+
+          this.crons.push(jobAutorunCron)
+        }),
+      )
+    }
+  }
 
   async bin({
     args,
@@ -734,6 +826,8 @@ export class BasePayload {
     this.db = this.config.db.init({ payload: this })
     this.db.payload = this
 
+    this.kv = this.config.kv.init({ payload: this })
+
     if (this.db?.init) {
       await this.db.init()
     }
@@ -833,37 +927,8 @@ export class BasePayload {
       throw error
     }
 
-    if (this.config.jobs.enabled && this.config.jobs.autoRun && !isNextBuild()) {
-      const DEFAULT_CRON = '* * * * *'
-      const DEFAULT_LIMIT = 10
-
-      const cronJobs =
-        typeof this.config.jobs.autoRun === 'function'
-          ? await this.config.jobs.autoRun(this)
-          : this.config.jobs.autoRun
-
-      await Promise.all(
-        cronJobs.map((cronConfig) => {
-          const job = new Cron(cronConfig.cron ?? DEFAULT_CRON, async () => {
-            if (typeof this.config.jobs.shouldAutoRun === 'function') {
-              const shouldAutoRun = await this.config.jobs.shouldAutoRun(this)
-
-              if (!shouldAutoRun) {
-                job.stop()
-
-                return false
-              }
-            }
-
-            await this.jobs.run({
-              limit: cronConfig.limit ?? DEFAULT_LIMIT,
-              queue: cronConfig.queue,
-            })
-          })
-
-          this.crons.push(job)
-        }),
-      )
+    if (options.cron) {
+      await this._initializeCrons()
     }
 
     return this
@@ -894,24 +959,16 @@ const initialized = new BasePayload()
 // eslint-disable-next-line no-restricted-exports
 export default initialized
 
-let cached: {
-  payload: null | Payload
-  promise: null | Promise<Payload>
-  reload: boolean | Promise<void>
-  ws: null | WebSocket
-} = (global as any)._payload
-
-if (!cached) {
-  cached = (global as any)._payload = { payload: null, promise: null, reload: false, ws: null }
-}
-
 export const reload = async (
   config: SanitizedConfig,
   payload: Payload,
   skipImportMapGeneration?: boolean,
+  options?: InitOptions,
 ): Promise<void> => {
-  await payload.destroy()
-
+  if (typeof payload.db.destroy === 'function') {
+    // Only destroy db, as we then later only call payload.db.init and not payload.init
+    await payload.db.destroy()
+  }
   payload.config = config
 
   payload.collections = config.collections.reduce(
@@ -949,16 +1006,22 @@ export const reload = async (
     })
   }
 
-  // Generate component map
+  // Generate import map
   if (skipImportMapGeneration !== true && config.admin?.importMap?.autoGenerate !== false) {
+    // This may run outside of the admin panel, e.g. in the user's frontend, where we don't have an import map file.
+    // We don't want to throw an error in this case, as it would break the user's frontend.
+    // => just skip it => ignoreResolveError: true
     await generateImportMap(config, {
+      ignoreResolveError: true,
       log: true,
     })
   }
 
-  await payload.db.init?.()
+  if (payload.db?.init) {
+    await payload.db.init()
+  }
 
-  if (payload.db.connect) {
+  if (!options?.disableDBConnect && payload.db.connect) {
     await payload.db.connect({ hotReload: true })
   }
 
@@ -970,14 +1033,73 @@ export const reload = async (
   ;(global as any)._payload_doNotCacheClientSchemaMap = true
 }
 
+let _cached: Map<
+  string,
+  {
+    initializedCrons: boolean
+    payload: null | Payload
+    promise: null | Promise<Payload>
+    reload: boolean | Promise<void>
+    ws: null | WebSocket
+  }
+> = (global as any)._payload
+
+if (!_cached) {
+  _cached = (global as any)._payload = new Map()
+}
+
+/**
+ * Get a payload instance.
+ * This function is a wrapper around new BasePayload().init() that adds the following functionality on top of that:
+ *
+ * - smartly caches Payload instance on the module scope. That way, we prevent unnecessarily initializing Payload over and over again
+ * when calling getPayload multiple times or from multiple locations.
+ * - adds HMR support and reloads the payload instance when the config changes.
+ */
 export const getPayload = async (
-  options: Pick<InitOptions, 'config' | 'importMap'>,
+  options: {
+    /**
+     * A unique key to identify the payload instance. You can pass your own key if you want to cache this payload instance separately.
+     * This is useful if you pass a different payload config for each instance.
+     *
+     * @default 'default'
+     */
+    key?: string
+  } & InitOptions,
 ): Promise<Payload> => {
   if (!options?.config) {
     throw new Error('Error: the payload config is required for getPayload to work.')
   }
 
+  let alreadyCachedSameConfig = false
+
+  let cached = _cached.get(options.key ?? 'default')
+  if (!cached) {
+    cached = {
+      initializedCrons: Boolean(options.cron),
+      payload: null,
+      promise: null,
+      reload: false,
+      ws: null,
+    }
+    _cached.set(options.key ?? 'default', cached)
+  } else {
+    alreadyCachedSameConfig = true
+  }
+
+  if (alreadyCachedSameConfig) {
+    // alreadyCachedSameConfig => already called onInit once, but same config => no need to call onInit again.
+    // calling onInit again would only make sense if a different config was passed.
+    options.disableOnInit = true
+  }
+
   if (cached.payload) {
+    if (options.cron && !cached.initializedCrons) {
+      // getPayload called with crons enabled, but existing cached version does not have crons initialized. => Initialize crons in existing cached version
+      cached.initializedCrons = true
+      await cached.payload._initializeCrons()
+    }
+
     if (cached.reload === true) {
       let resolve!: () => void
 
@@ -986,7 +1108,18 @@ export const getPayload = async (
       // will reach `if (cached.reload instanceof Promise) {` which then waits for the first reload to finish.
       cached.reload = new Promise((res) => (resolve = res))
       const config = await options.config
-      await reload(config, cached.payload, !options.importMap)
+
+      // Reload the payload instance after a config change (triggered by HMR in development).
+      // The second parameter (false) forces import map regeneration rather than deciding based on options.importMap.
+      //
+      // Why we always regenerate import map: getPayload() may be called from multiple sources (admin panel, frontend, etc.)
+      // that share the same cache but may pass different importMap values. Since call order is unpredictable,
+      // we cannot rely on options.importMap to determine if regeneration is needed.
+      //
+      // Example scenario: If the frontend calls getPayload() without importMap first, followed by the admin
+      // panel calling it with importMap, we'd incorrectly skip generation for the admin panel's needs.
+      // By always regenerating on reload, we ensure the import map stays in sync with the updated config.
+      await reload(config, cached.payload, false, options)
 
       resolve()
     }
@@ -1000,12 +1133,12 @@ export const getPayload = async (
     return cached.payload
   }
 
-  if (!cached.promise) {
-    // no need to await options.config here, as it's already awaited in the BasePayload.init
-    cached.promise = new BasePayload().init(options)
-  }
-
   try {
+    if (!cached.promise) {
+      // no need to await options.config here, as it's already awaited in the BasePayload.init
+      cached.promise = new BasePayload().init(options)
+    }
+
     cached.payload = await cached.promise
 
     if (
@@ -1016,20 +1149,27 @@ export const getPayload = async (
     ) {
       try {
         const port = process.env.PORT || '3000'
+        const hasHTTPS =
+          process.env.USE_HTTPS === 'true' || process.argv.includes('--experimental-https')
+        const protocol = hasHTTPS ? 'wss' : 'ws'
 
         const path = '/_next/webpack-hmr'
         // The __NEXT_ASSET_PREFIX env variable is set for both assetPrefix and basePath (tested in Next.js 15.1.6)
         const prefix = process.env.__NEXT_ASSET_PREFIX ?? ''
 
         cached.ws = new WebSocket(
-          process.env.PAYLOAD_HMR_URL_OVERRIDE ?? `ws://localhost:${port}${prefix}${path}`,
+          process.env.PAYLOAD_HMR_URL_OVERRIDE ?? `${protocol}://localhost:${port}${prefix}${path}`,
         )
 
         cached.ws.onmessage = (event) => {
           if (typeof event.data === 'string') {
             const data = JSON.parse(event.data)
 
-            if ('action' in data && data.action === 'serverComponentChanges') {
+            if (
+              // On Next.js 15, we need to check for data.action. On Next.js 16, we need to check for data.type.
+              data.type === 'serverComponentChanges' ||
+              data.action === 'serverComponentChanges'
+            ) {
               cached.reload = true
             }
           }
@@ -1099,13 +1239,15 @@ export type {
   SanitizedFieldPermissions,
   SanitizedGlobalPermission,
   SanitizedPermissions,
-  User,
+  UntypedUser as User,
   VerifyConfig,
 } from './auth/types.js'
 export { generateImportMap } from './bin/generateImportMap/index.js'
 
 export type { ImportMap } from './bin/generateImportMap/index.js'
 export { genImportMapIterateFields } from './bin/generateImportMap/iterateFields.js'
+export { migrate as migrateCLI } from './bin/migrate.js'
+
 export {
   type ClientCollectionConfig,
   createClientCollectionConfig,
@@ -1128,6 +1270,7 @@ export type {
   AfterRefreshHook as CollectionAfterRefreshHook,
   AuthCollection,
   AuthOperationsFromCollectionSlug,
+  BaseFilter,
   BaseListFilter,
   BeforeChangeHook as CollectionBeforeChangeHook,
   BeforeDeleteHook as CollectionBeforeDeleteHook,
@@ -1152,8 +1295,8 @@ export type {
 } from './collections/config/types.js'
 
 export type { CompoundIndex } from './collections/config/types.js'
-
 export type { SanitizedCompoundIndex } from './collections/config/types.js'
+
 export { createDataloaderCacheKey, getDataLoader } from './collections/dataloader.js'
 export { countOperation } from './collections/operations/count.js'
 export { createOperation } from './collections/operations/create.js'
@@ -1169,16 +1312,17 @@ export { restoreVersionOperation } from './collections/operations/restoreVersion
 export { updateOperation } from './collections/operations/update.js'
 export { updateByIDOperation } from './collections/operations/updateByID.js'
 export { buildConfig } from './config/build.js'
-
 export {
   type ClientConfig,
   createClientConfig,
+  type CreateClientConfigArgs,
+  createUnauthenticatedClientConfig,
   serverOnlyAdminConfigProperties,
   serverOnlyConfigProperties,
-  type UnsanitizedClientConfig,
+  type UnauthenticatedClientConfig,
 } from './config/client.js'
-
 export { defaults } from './config/defaults.js'
+
 export { type OrderableEndpointBody } from './config/orderable/index.js'
 export { sanitizeConfig } from './config/sanitize.js'
 export type * from './config/types.js'
@@ -1188,6 +1332,7 @@ export { defaultBeginTransaction } from './database/defaultBeginTransaction.js'
 export { flattenWhereToOperators } from './database/flattenWhereToOperators.js'
 export { getLocalizedPaths } from './database/getLocalizedPaths.js'
 export { createMigration } from './database/migrations/createMigration.js'
+export { findMigrationDir } from './database/migrations/findMigrationDir.js'
 export { getMigrations } from './database/migrations/getMigrations.js'
 export { getPredefinedMigration } from './database/migrations/getPredefinedMigration.js'
 export { migrate } from './database/migrations/migrate.js'
@@ -1233,6 +1378,7 @@ export type {
   Destroy,
   Find,
   FindArgs,
+  FindDistinct,
   FindGlobal,
   FindGlobalArgs,
   FindGlobalVersions,
@@ -1246,6 +1392,7 @@ export type {
   Migration,
   MigrationData,
   MigrationTemplateArgs,
+  PaginatedDistinctDocs,
   PaginatedDocs,
   QueryDrafts,
   QueryDraftsArgs,
@@ -1290,14 +1437,19 @@ export {
   MissingFile,
   NotFound,
   QueryError,
+  UnauthorizedError,
   UnverifiedEmail,
   ValidationError,
   ValidationErrorName,
 } from './errors/index.js'
-export type { ValidationFieldError } from './errors/index.js'
 
+export type { ValidationFieldError } from './errors/index.js'
 export { baseBlockFields } from './fields/baseFields/baseBlockFields.js'
+
 export { baseIDField } from './fields/baseFields/baseIDField.js'
+
+export { slugField, type SlugFieldProps } from './fields/baseFields/slug/index.js'
+
 export {
   createClientField,
   createClientFields,
@@ -1305,9 +1457,17 @@ export {
   type ServerOnlyFieldProperties,
 } from './fields/config/client.js'
 
-export { sanitizeFields } from './fields/config/sanitize.js'
-
 export interface FieldCustom extends Record<string, any> {}
+
+export interface CollectionCustom extends Record<string, any> {}
+
+export interface CollectionAdminCustom extends Record<string, any> {}
+
+export interface GlobalCustom extends Record<string, any> {}
+
+export interface GlobalAdminCustom extends Record<string, any> {}
+
+export { sanitizeFields } from './fields/config/sanitize.js'
 
 export type {
   AdminClient,
@@ -1418,15 +1578,16 @@ export type {
 } from './fields/config/types.js'
 
 export { getDefaultValue } from './fields/getDefaultValue.js'
-
 export { traverseFields as afterChangeTraverseFields } from './fields/hooks/afterChange/traverseFields.js'
+
 export { promise as afterReadPromise } from './fields/hooks/afterRead/promise.js'
 export { traverseFields as afterReadTraverseFields } from './fields/hooks/afterRead/traverseFields.js'
 export { traverseFields as beforeChangeTraverseFields } from './fields/hooks/beforeChange/traverseFields.js'
 export { traverseFields as beforeValidateTraverseFields } from './fields/hooks/beforeValidate/traverseFields.js'
-export { sortableFieldTypes } from './fields/sortableFieldTypes.js'
 
-export { validations } from './fields/validations.js'
+export { sortableFieldTypes } from './fields/sortableFieldTypes.js'
+export { validateBlocksFilterOptions, validations } from './fields/validations.js'
+
 export type {
   ArrayFieldValidation,
   BlocksFieldValidation,
@@ -1471,6 +1632,7 @@ export type {
   AfterChangeHook as GlobalAfterChangeHook,
   AfterReadHook as GlobalAfterReadHook,
   BeforeChangeHook as GlobalBeforeChangeHook,
+  BeforeOperationHook as GlobalBeforeOperationHook,
   BeforeReadHook as GlobalBeforeReadHook,
   BeforeValidateHook as GlobalBeforeValidateHook,
   DataFromGlobalSlug,
@@ -1479,12 +1641,16 @@ export type {
   SanitizedGlobalConfig,
 } from './globals/config/types.js'
 export { docAccessOperation as docAccessOperationGlobal } from './globals/operations/docAccess.js'
-
 export { findOneOperation } from './globals/operations/findOne.js'
+
 export { findVersionByIDOperation as findVersionByIDOperationGlobal } from './globals/operations/findVersionByID.js'
+
 export { findVersionsOperation as findVersionsOperationGlobal } from './globals/operations/findVersions.js'
 export { restoreVersionOperation as restoreVersionOperationGlobal } from './globals/operations/restoreVersion.js'
 export { updateOperation as updateOperationGlobal } from './globals/operations/update.js'
+export * from './kv/adapters/DatabaseKVAdapter.js'
+export * from './kv/adapters/InMemoryKVAdapter.js'
+export * from './kv/index.js'
 export type {
   CollapsedPreferences,
   CollectionPreferences,
@@ -1501,9 +1667,8 @@ export type {
   TabsPreferences,
 } from './preferences/types.js'
 export type { QueryPreset } from './query-presets/types.js'
-export { jobAfterRead } from './queues/config/index.js'
+export { jobAfterRead } from './queues/config/collection.js'
 export type { JobsConfig, RunJobAccess, RunJobAccessArgs } from './queues/config/types/index.js'
-
 export type {
   RunInlineTaskFunction,
   RunTaskFunction,
@@ -1517,6 +1682,7 @@ export type {
   TaskOutput,
   TaskType,
 } from './queues/config/types/taskTypes.js'
+
 export type {
   BaseJob,
   JobLog,
@@ -1527,15 +1693,23 @@ export type {
   WorkflowHandler,
   WorkflowTypes,
 } from './queues/config/types/workflowTypes.js'
+export { countRunnableOrActiveJobsForQueue } from './queues/operations/handleSchedules/countRunnableOrActiveJobsForQueue.js'
 export { importHandlerPath } from './queues/operations/runJobs/runJob/importHandlerPath.js'
 
+export {
+  _internal_jobSystemGlobals,
+  _internal_resetJobSystemGlobals,
+  getCurrentDate,
+} from './queues/utilities/getCurrentDate.js'
 export { getLocalI18n } from './translations/getLocalI18n.js'
 export * from './types/index.js'
 export { getFileByPath } from './uploads/getFileByPath.js'
+export { _internal_safeFetchGlobal } from './uploads/safeFetch.js'
+
 export type * from './uploads/types.js'
 export { addDataAndFileToRequest } from './utilities/addDataAndFileToRequest.js'
-
 export { addLocalesToRequestFromData, sanitizeLocales } from './utilities/addLocalesToRequest.js'
+export { canAccessAdmin } from './utilities/canAccessAdmin.js'
 export { commitTransaction } from './utilities/commitTransaction.js'
 export {
   configToJSONSchema,
@@ -1562,7 +1736,6 @@ export {
   type CustomVersionParser,
 } from './utilities/dependencies/dependencyChecker.js'
 export { getDependencies } from './utilities/dependencies/getDependencies.js'
-export type { FieldSchemaJSON } from './utilities/fieldSchemaToJSON.js'
 export {
   findUp,
   findUpSync,
@@ -1605,9 +1778,9 @@ export { versionDefaults } from './versions/defaults.js'
 export { deleteCollectionVersions } from './versions/deleteCollectionVersions.js'
 export { appendVersionToQueryKey } from './versions/drafts/appendVersionToQueryKey.js'
 export { getQueryDraftsSort } from './versions/drafts/getQueryDraftsSort.js'
+
 export { enforceMaxVersions } from './versions/enforceMaxVersions.js'
 export { getLatestCollectionVersion } from './versions/getLatestCollectionVersion.js'
-
 export { getLatestGlobalVersion } from './versions/getLatestGlobalVersion.js'
 export { saveVersion } from './versions/saveVersion.js'
 export type { SchedulePublishTaskInput } from './versions/schedule/types.js'

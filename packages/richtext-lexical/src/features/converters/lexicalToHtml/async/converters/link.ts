@@ -16,9 +16,7 @@ export const LinkHTMLConverterAsync: (args: {
       })
     ).join('')
 
-    return `<a${providedStyleTag} href="${node.fields.url}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>
-        ${children}
-      </a>`
+    return `<a${providedStyleTag} href="${node.fields.url}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>${children}</a>`
   },
   link: async ({ node, nodesToHTML, populate, providedStyleTag }) => {
     const children = (
@@ -42,8 +40,6 @@ export const LinkHTMLConverterAsync: (args: {
       href = node.fields.uploadFile.url || '#'
     }
 
-    return `<a${providedStyleTag} href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>
-        ${children}
-      </a>`
+    return `<a${providedStyleTag} href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>${children}</a>`
   },
 })

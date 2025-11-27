@@ -1,5 +1,6 @@
 import type {
   AdminViewServerProps,
+  CollectionPreferences,
   Data,
   DocumentViewClientProps,
   DocumentViewServerProps,
@@ -9,18 +10,25 @@ import type {
   RenderDocumentVersionsProperties,
 } from 'payload'
 
-import { DocumentInfoProvider, EditDepthProvider, HydrateAuthProvider } from '@payloadcms/ui'
+import {
+  DocumentInfoProvider,
+  EditDepthProvider,
+  HydrateAuthProvider,
+  LivePreviewProvider,
+} from '@payloadcms/ui'
 import { RenderServerComponent } from '@payloadcms/ui/elements/RenderServerComponent'
+import { handleLivePreview, handlePreview } from '@payloadcms/ui/rsc'
 import { isEditing as getIsEditing } from '@payloadcms/ui/shared'
 import { buildFormState } from '@payloadcms/ui/utilities/buildFormState'
 import { notFound, redirect } from 'next/navigation.js'
-import { logError } from 'payload'
+import { isolateObjectProperty, logError } from 'payload'
 import { formatAdminURL } from 'payload/shared'
 import React from 'react'
 
 import type { GenerateEditViewMetadata } from './getMetaBySegment.js'
 
 import { DocumentHeader } from '../../elements/DocumentHeader/index.js'
+import { getPreferences } from '../../utilities/getPreferences.js'
 import { NotFoundView } from '../NotFound/index.js'
 import { getDocPreferences } from './getDocPreferences.js'
 import { getDocumentData } from './getDocumentData.js'
@@ -57,6 +65,7 @@ export const renderDocument = async ({
   redirectAfterCreate,
   redirectAfterDelete,
   redirectAfterDuplicate,
+  redirectAfterRestore,
   searchParams,
   versions,
   viewType,
@@ -66,6 +75,7 @@ export const renderDocument = async ({
   readonly redirectAfterCreate?: boolean
   readonly redirectAfterDelete?: boolean
   readonly redirectAfterDuplicate?: boolean
+  readonly redirectAfterRestore?: boolean
   versions?: RenderDocumentVersionsProperties
 } & AdminViewServerProps): Promise<{
   data: Data
@@ -100,25 +110,63 @@ export const renderDocument = async ({
 
   // Fetch the doc required for the view
   let doc =
-    initialData ||
-    (await getDocumentData({
-      id: idFromArgs,
-      collectionSlug,
-      globalSlug,
-      locale,
-      payload,
-      req,
-      user,
-    }))
+    !idFromArgs && !globalSlug
+      ? initialData || null
+      : await getDocumentData({
+          id: idFromArgs,
+          collectionSlug,
+          globalSlug,
+          locale,
+          payload,
+          req,
+          segments,
+          user,
+        })
 
   if (isEditing && !doc) {
-    throw new Error('not-found')
+    // If it's a collection document that doesn't exist, redirect to collection list
+    if (collectionSlug) {
+      const redirectURL = formatAdminURL({
+        adminRoute,
+        path: `/collections/${collectionSlug}?notFound=${encodeURIComponent(idFromArgs)}`,
+        serverURL,
+      })
+      redirect(redirectURL)
+    } else {
+      // For globals or other cases, keep the 404 behavior
+      throw new Error('not-found')
+    }
   }
+
+  const isTrashedDoc = Boolean(doc && 'deletedAt' in doc && typeof doc?.deletedAt === 'string')
+
+  // CRITICAL FIX FOR TRANSACTION RACE CONDITION:
+  // When running parallel operations with Promise.all, if they share the same req object
+  // and one operation calls initTransaction() which MUTATES req.transactionID, that mutation
+  // is visible to all parallel operations. This causes:
+  // 1. Operation A (e.g., getDocumentPermissions → docAccessOperation) calls initTransaction()
+  //    which sets req.transactionID = Promise, then resolves it to a UUID
+  // 2. Operation B (e.g., getIsLocked) running in parallel receives the SAME req with the mutated transactionID
+  // 3. Operation A (does not even know that Operation B even exists and is stil using the transactionID) commits/ends its transaction
+  // 4. Operation B tries to use the now-expired session → MongoExpiredSessionError!
+  //
+  // Solution: Use isolateObjectProperty to create a Proxy that isolates the 'transactionID' property.
+  // This allows each operation to have its own transactionID without affecting the parent req.
+  // If parent req already has a transaction, preserve it (don't isolate), since this
+  // issue only arises when one of the operations calls initTransaction() themselves -
+  // because then, that operation will also try to commit/end the transaction itself.
+
+  // If the transactionID is already set, the parallel operations will not try to
+  // commit/end the transaction themselves, so we don't need to isolate the
+  // transactionID property.
+  const reqForPermissions = req.transactionID ? req : isolateObjectProperty(req, 'transactionID')
+  const reqForLockCheck = req.transactionID ? req : isolateObjectProperty(req, 'transactionID')
 
   const [
     docPreferences,
     { docPermissions, hasPublishPermission, hasSavePermission },
     { currentEditor, isLocked, lastUpdateTime },
+    entityPreferences,
   ] = await Promise.all([
     // Get document preferences
     getDocPreferences({
@@ -129,24 +177,34 @@ export const renderDocument = async ({
       user,
     }),
 
-    // Get permissions
+    // Get permissions - isolated transactionID prevents cross-contamination
     getDocumentPermissions({
       id: idFromArgs,
       collectionConfig,
       data: doc,
       globalConfig,
-      req,
+      req: reqForPermissions,
     }),
 
-    // Fetch document lock state
+    // Fetch document lock state - isolated transactionID prevents cross-contamination
     getIsLocked({
       id: idFromArgs,
       collectionConfig,
       globalConfig,
       isEditing,
-      req,
+      req: reqForLockCheck,
     }),
+
+    // get entity preferences
+    getPreferences<CollectionPreferences>(
+      collectionSlug ? `collection-${collectionSlug}` : `global-${globalSlug}`,
+      payload,
+      req.user.id,
+      req.user.collection,
+    ),
   ])
+
+  const operation = (collectionSlug && idFromArgs) || globalSlug ? 'update' : 'create'
 
   const [
     { hasPublishedDoc, mostRecentVersionIsAutosaved, unpublishedVersionCount, versionCount },
@@ -171,7 +229,8 @@ export const renderDocument = async ({
       fallbackLocale: false,
       globalSlug,
       locale: locale?.code,
-      operation: (collectionSlug && idFromArgs) || globalSlug ? 'update' : 'create',
+      operation,
+      readOnly: isTrashedDoc || isLocked,
       renderAllFields: true,
       req,
       schemaPath: collectionSlug || globalSlug,
@@ -296,6 +355,7 @@ export const renderDocument = async ({
   }
 
   const documentSlots = renderDocumentSlots({
+    id,
     collectionConfig,
     globalConfig,
     hasSavePermission,
@@ -303,12 +363,33 @@ export const renderDocument = async ({
     req,
   })
 
+  // Extract Description from documentSlots to pass to DocumentHeader
+  const { Description } = documentSlots
+
   const clientProps: DocumentViewClientProps = {
     formState,
     ...documentSlots,
     documentSubViewType,
     viewType,
   }
+
+  const { isLivePreviewEnabled, livePreviewConfig, livePreviewURL } = await handleLivePreview({
+    collectionSlug,
+    config,
+    data: doc,
+    globalSlug,
+    operation,
+    req,
+  })
+
+  const { isPreviewEnabled, previewURL } = await handlePreview({
+    collectionSlug,
+    config,
+    data: doc,
+    globalSlug,
+    operation,
+    req,
+  })
 
   return {
     data: doc,
@@ -328,39 +409,53 @@ export const renderDocument = async ({
         initialState={formState}
         isEditing={isEditing}
         isLocked={isLocked}
+        isTrashed={isTrashedDoc}
         key={locale?.code}
         lastUpdateTime={lastUpdateTime}
         mostRecentVersionIsAutosaved={mostRecentVersionIsAutosaved}
         redirectAfterCreate={redirectAfterCreate}
         redirectAfterDelete={redirectAfterDelete}
         redirectAfterDuplicate={redirectAfterDuplicate}
+        redirectAfterRestore={redirectAfterRestore}
         unpublishedVersionCount={unpublishedVersionCount}
         versionCount={versionCount}
       >
-        {showHeader && !drawerSlug && (
-          <DocumentHeader
-            collectionConfig={collectionConfig}
-            globalConfig={globalConfig}
-            i18n={i18n}
-            payload={payload}
-            permissions={permissions}
-          />
-        )}
-        <HydrateAuthProvider permissions={permissions} />
-        <EditDepthProvider>
-          {RenderServerComponent({
-            clientProps,
-            Component: View,
-            importMap,
-            serverProps: documentViewServerProps,
-          })}
-        </EditDepthProvider>
+        <LivePreviewProvider
+          breakpoints={livePreviewConfig?.breakpoints}
+          isLivePreviewEnabled={isLivePreviewEnabled && operation !== 'create'}
+          isLivePreviewing={Boolean(
+            entityPreferences?.value?.editViewType === 'live-preview' && livePreviewURL,
+          )}
+          isPreviewEnabled={Boolean(isPreviewEnabled)}
+          previewURL={previewURL}
+          typeofLivePreviewURL={typeof livePreviewConfig?.url as 'function' | 'string' | undefined}
+          url={livePreviewURL}
+        >
+          {showHeader && !drawerSlug && (
+            <DocumentHeader
+              AfterHeader={Description}
+              collectionConfig={collectionConfig}
+              globalConfig={globalConfig}
+              permissions={permissions}
+              req={req}
+            />
+          )}
+          <HydrateAuthProvider permissions={permissions} />
+          <EditDepthProvider>
+            {RenderServerComponent({
+              clientProps,
+              Component: View,
+              importMap,
+              serverProps: documentViewServerProps,
+            })}
+          </EditDepthProvider>
+        </LivePreviewProvider>
       </DocumentInfoProvider>
     ),
   }
 }
 
-export async function Document(props: AdminViewServerProps) {
+export async function DocumentView(props: AdminViewServerProps) {
   try {
     const { Document: RenderedDocument } = await renderDocument(props)
     return RenderedDocument

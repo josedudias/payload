@@ -5,11 +5,7 @@ import { fileURLToPath } from 'node:url'
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
 
-export const allDatabaseAdapters = {
-  mongodb: `
-  import { mongooseAdapter } from '@payloadcms/db-mongodb'
-
-  export const databaseAdapter = mongooseAdapter({
+const mongooseAdapterArgs = `
     ensureIndexes: true,
     // required for connect to detect that we are using a memory server
     mongoMemoryServer:  global._mongoMemoryServer,
@@ -20,6 +16,40 @@ export const allDatabaseAdapters = {
     collation: {
       strength: 1,
     },
+`
+
+export const allDatabaseAdapters = {
+  mongodb: `
+  import { mongooseAdapter } from '@payloadcms/db-mongodb'
+
+  export const databaseAdapter = mongooseAdapter({
+    ${mongooseAdapterArgs}
+  })`,
+  cosmosdb: `
+  import { mongooseAdapter, compatibilityOptions } from '@payloadcms/db-mongodb'
+
+  export const databaseAdapter = mongooseAdapter({
+    ...compatibilityOptions.cosmosdb,
+    ${mongooseAdapterArgs}
+  })`,
+  documentdb: `
+  import { mongooseAdapter, compatibilityOptions } from '@payloadcms/db-mongodb'
+
+  export const databaseAdapter = mongooseAdapter({
+    ...compatibilityOptions.documentdb,
+    ${mongooseAdapterArgs}
+  })`,
+  firestore: `
+  import { mongooseAdapter, compatibilityOptions } from '@payloadcms/db-mongodb'
+
+  export const databaseAdapter = mongooseAdapter({
+    ...compatibilityOptions.firestore,
+    ${mongooseAdapterArgs}
+    // The following options prevent some tests from failing.
+    // More work needed to get tests succeeding without these options.
+    ensureIndexes: true,
+    disableIndexHints: false,
+    useAlternativeDropDatabase: false,
   })`,
   postgres: `
   import { postgresAdapter } from '@payloadcms/db-postgres'
@@ -94,6 +124,11 @@ export const allDatabaseAdapters = {
         process.env.POSTGRES_URL || 'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
     },
   })`,
+  d1: `
+import { sqliteD1Adapter } from '@payloadcms/db-d1-sqlite'
+
+export const databaseAdapter = sqliteD1Adapter({ binding: global.d1 })
+  `,
 }
 
 /**

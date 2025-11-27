@@ -12,6 +12,7 @@ import { buildJoinAggregation } from './utilities/buildJoinAggregation.js'
 import { buildProjectionFromSelect } from './utilities/buildProjectionFromSelect.js'
 import { getCollection } from './utilities/getEntity.js'
 import { getSession } from './utilities/getSession.js'
+import { resolveJoins } from './utilities/resolveJoins.js'
 import { transform } from './utilities/transform.js'
 
 export const queryDrafts: QueryDrafts = async function queryDrafts(
@@ -34,10 +35,6 @@ export const queryDrafts: QueryDrafts = async function queryDrafts(
     collectionSlug,
     versions: true,
   })
-
-  const options: QueryOptions = {
-    session: await getSession(this, req),
-  }
 
   let hasNearConstraint
   let sort
@@ -77,6 +74,12 @@ export const queryDrafts: QueryDrafts = async function queryDrafts(
     fields,
     select,
   })
+
+  const session = await getSession(this, req)
+  const options: QueryOptions = {
+    session,
+  }
+
   // useEstimatedCount is faster, but not accurate, as it ignores any filters. It is thus set to true if there are no filters.
   const useEstimatedCount =
     hasNearConstraint || !versionQuery || Object.keys(versionQuery).length === 0
@@ -156,6 +159,17 @@ export const queryDrafts: QueryDrafts = async function queryDrafts(
     })
   } else {
     result = await Model.paginate(versionQuery, paginationOptions)
+  }
+
+  if (!this.useJoinAggregations) {
+    await resolveJoins({
+      adapter: this,
+      collectionSlug,
+      docs: result.docs as Record<string, unknown>[],
+      joins,
+      locale,
+      versions: true,
+    })
   }
 
   transform({

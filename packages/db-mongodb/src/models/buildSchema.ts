@@ -143,7 +143,12 @@ export const buildSchema = (args: {
     const idField = schemaFields.find((field) => fieldAffectsData(field) && field.name === 'id')
     if (idField) {
       fields = {
-        _id: idField.type === 'number' ? Number : String,
+        _id:
+          idField.type === 'number'
+            ? payload.db.useBigIntForNumberIDs
+              ? mongoose.Schema.Types.BigInt
+              : Number
+            : String,
       }
       schemaFields = schemaFields.filter(
         (field) => !(fieldAffectsData(field) && field.name === 'id'),
@@ -231,6 +236,7 @@ const blocks: FieldSchemaGenerator<BlocksField> = (
   parentIsLocalized,
 ): void => {
   const fieldSchema: SchemaTypeOptions<any> = {
+    ...formatBaseSchema({ buildSchemaOptions, field, parentIsLocalized }),
     type: [new mongoose.Schema({}, { _id: false, discriminatorKey: 'blockType' })],
   }
 
@@ -900,7 +906,11 @@ const getRelationshipValueType = (field: RelationshipField | UploadField, payloa
     }
 
     if (customIDType === 'number') {
-      return mongoose.Schema.Types.Number
+      if (payload.db.useBigIntForNumberIDs) {
+        return mongoose.Schema.Types.BigInt
+      } else {
+        return mongoose.Schema.Types.Number
+      }
     }
 
     return mongoose.Schema.Types.String

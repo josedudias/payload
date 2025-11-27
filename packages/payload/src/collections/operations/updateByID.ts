@@ -13,6 +13,7 @@ import type {
   Collection,
   RequiredDataFromCollectionSlug,
   SelectFromCollectionSlug,
+  TypeWithID,
 } from '../config/types.js'
 
 import { executeAccess } from '../../auth/executeAccess.js'
@@ -22,6 +23,7 @@ import { APIError, Forbidden, NotFound } from '../../errors/index.js'
 import { type CollectionSlug, deepCopyObjectSimple } from '../../index.js'
 import { generateFileData } from '../../uploads/generateFileData.js'
 import { unlinkTempFiles } from '../../uploads/unlinkTempFiles.js'
+import { appendNonTrashedFilter } from '../../utilities/appendNonTrashedFilter.js'
 import { commitTransaction } from '../../utilities/commitTransaction.js'
 import { initTransaction } from '../../utilities/initTransaction.js'
 import { killTransaction } from '../../utilities/killTransaction.js'
@@ -47,6 +49,7 @@ export type Arguments<TSlug extends CollectionSlug> = {
   req: PayloadRequest
   select?: SelectType
   showHiddenFields?: boolean
+  trash?: boolean
 }
 
 export const updateByIDOperation = async <
@@ -102,6 +105,7 @@ export const updateByIDOperation = async <
       req,
       select: incomingSelect,
       showHiddenFields,
+      trash = false,
     } = args
 
     if (!id) {
@@ -123,14 +127,39 @@ export const updateByIDOperation = async <
     // Retrieve document
     // /////////////////////////////////////
 
+    const where = { id: { equals: id } }
+
+    let fullWhere = combineQueries(where, accessResults)
+
+    const isTrashAttempt =
+      collectionConfig.trash &&
+      typeof data === 'object' &&
+      data !== null &&
+      'deletedAt' in data &&
+      data.deletedAt != null
+
+    if (isTrashAttempt && !overrideAccess) {
+      const deleteAccessResult = await executeAccess({ req }, collectionConfig.access.delete)
+      fullWhere = combineQueries(fullWhere, deleteAccessResult)
+    }
+
+    // Exclude trashed documents when trash: false
+    fullWhere = appendNonTrashedFilter({
+      enableTrash: collectionConfig.trash,
+      trash,
+      where: fullWhere,
+    })
+
     const findOneArgs: FindOneArgs = {
       collection: collectionConfig.slug,
       locale: locale!,
       req,
-      where: combineQueries({ id: { equals: id } }, accessResults),
+      where: fullWhere,
     }
 
-    const docWithLocales = await getLatestCollectionVersion({
+    const docWithLocales = await getLatestCollectionVersion<
+      RequiredDataFromCollectionSlug<TSlug> & TypeWithID
+    >({
       id,
       config: collectionConfig,
       payload,
@@ -143,6 +172,9 @@ export const updateByIDOperation = async <
     }
     if (!docWithLocales && hasWherePolicy) {
       throw new Forbidden(req.t)
+    }
+    if (!docWithLocales) {
+      throw new NotFound(req.t)
     }
 
     // /////////////////////////////////////

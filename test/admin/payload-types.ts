@@ -87,12 +87,19 @@ export interface Config {
     'disable-duplicate': DisableDuplicate;
     'disable-copy-to-locale': DisableCopyToLocale;
     'edit-menu-items': EditMenuItem;
+    'format-doc-url': FormatDocUrl;
     'base-list-filters': BaseListFilter;
     with300documents: With300Document;
     'with-list-drawer': WithListDrawer;
     placeholder: Placeholder;
     'use-as-title-group-field': UseAsTitleGroupField;
     'disable-bulk-edit': DisableBulkEdit;
+    'custom-list-drawer': CustomListDrawer;
+    'list-view-select-api': ListViewSelectApi;
+    virtuals: Virtual;
+    'no-timestamps': NoTimestamp;
+    localized: Localized;
+    'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
@@ -119,12 +126,19 @@ export interface Config {
     'disable-duplicate': DisableDuplicateSelect<false> | DisableDuplicateSelect<true>;
     'disable-copy-to-locale': DisableCopyToLocaleSelect<false> | DisableCopyToLocaleSelect<true>;
     'edit-menu-items': EditMenuItemsSelect<false> | EditMenuItemsSelect<true>;
+    'format-doc-url': FormatDocUrlSelect<false> | FormatDocUrlSelect<true>;
     'base-list-filters': BaseListFiltersSelect<false> | BaseListFiltersSelect<true>;
     with300documents: With300DocumentsSelect<false> | With300DocumentsSelect<true>;
     'with-list-drawer': WithListDrawerSelect<false> | WithListDrawerSelect<true>;
     placeholder: PlaceholderSelect<false> | PlaceholderSelect<true>;
     'use-as-title-group-field': UseAsTitleGroupFieldSelect<false> | UseAsTitleGroupFieldSelect<true>;
     'disable-bulk-edit': DisableBulkEditSelect<false> | DisableBulkEditSelect<true>;
+    'custom-list-drawer': CustomListDrawerSelect<false> | CustomListDrawerSelect<true>;
+    'list-view-select-api': ListViewSelectApiSelect<false> | ListViewSelectApiSelect<true>;
+    virtuals: VirtualsSelect<false> | VirtualsSelect<true>;
+    'no-timestamps': NoTimestampsSelect<false> | NoTimestampsSelect<true>;
+    localized: LocalizedSelect<false> | LocalizedSelect<true>;
+    'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
     'payload-migrations': PayloadMigrationsSelect<false> | PayloadMigrationsSelect<true>;
@@ -132,6 +146,7 @@ export interface Config {
   db: {
     defaultIDType: string;
   };
+  fallbackLocale: ('false' | 'none' | 'null') | false | null | ('es' | 'en') | ('es' | 'en')[];
   globals: {
     'hidden-global': HiddenGlobal;
     'not-in-view-global': NotInViewGlobal;
@@ -272,6 +287,11 @@ export interface Post {
   wavelengths?: ('fm' | 'am') | null;
   selectField?: ('option1' | 'option2')[] | null;
   file?: string | null;
+  noReadAccessField?: string | null;
+  disableListColumnTextInRow?: string | null;
+  someGroup?: {
+    disableListColumnTextInGroup?: string | null;
+  };
   updatedAt: string;
   createdAt: string;
   _status?: ('draft' | 'published') | null;
@@ -293,6 +313,13 @@ export interface User {
   hash?: string | null;
   loginAttempts?: number | null;
   lockUntil?: string | null;
+  sessions?:
+    | {
+        id: string;
+        createdAt?: string | null;
+        expiresAt: string;
+      }[]
+    | null;
   password?: string | null;
 }
 /**
@@ -370,6 +397,7 @@ export interface CustomField {
   descriptionAsComponent?: string | null;
   customSelectField?: string | null;
   customSelectInput?: string | null;
+  customMultiSelectField?: string[] | null;
   relationshipFieldWithBeforeAfterInputs?: (string | null) | Post;
   arrayFieldWithBeforeAfterInputs?:
     | {
@@ -495,6 +523,19 @@ export interface EditMenuItem {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "format-doc-url".
+ */
+export interface FormatDocUrl {
+  id: string;
+  title: string;
+  description?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  deletedAt?: string | null;
+  _status?: ('draft' | 'published') | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "base-list-filters".
  */
 export interface BaseListFilter {
@@ -557,6 +598,77 @@ export interface DisableBulkEdit {
   id: string;
   updatedAt: string;
   createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "custom-list-drawer".
+ */
+export interface CustomListDrawer {
+  id: string;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "list-view-select-api".
+ */
+export interface ListViewSelectApi {
+  id: string;
+  title?: string | null;
+  description?: string | null;
+  group?: {
+    groupNameField?: string | null;
+  };
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "virtuals".
+ */
+export interface Virtual {
+  id: string;
+  virtualTitleFromPost?: string | null;
+  virtualText?: string | null;
+  post?: (string | null) | Post;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "no-timestamps".
+ */
+export interface NoTimestamp {
+  id: string;
+  title?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "localized".
+ */
+export interface Localized {
+  id: string;
+  title?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  _status?: ('draft' | 'published') | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-kv".
+ */
+export interface PayloadKv {
+  id: string;
+  key: string;
+  data:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -646,6 +758,10 @@ export interface PayloadLockedDocument {
         value: string | EditMenuItem;
       } | null)
     | ({
+        relationTo: 'format-doc-url';
+        value: string | FormatDocUrl;
+      } | null)
+    | ({
         relationTo: 'base-list-filters';
         value: string | BaseListFilter;
       } | null)
@@ -668,6 +784,26 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'disable-bulk-edit';
         value: string | DisableBulkEdit;
+      } | null)
+    | ({
+        relationTo: 'custom-list-drawer';
+        value: string | CustomListDrawer;
+      } | null)
+    | ({
+        relationTo: 'list-view-select-api';
+        value: string | ListViewSelectApi;
+      } | null)
+    | ({
+        relationTo: 'virtuals';
+        value: string | Virtual;
+      } | null)
+    | ({
+        relationTo: 'no-timestamps';
+        value: string | NoTimestamp;
+      } | null)
+    | ({
+        relationTo: 'localized';
+        value: string | Localized;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -800,6 +936,13 @@ export interface PostsSelect<T extends boolean = true> {
   wavelengths?: T;
   selectField?: T;
   file?: T;
+  noReadAccessField?: T;
+  disableListColumnTextInRow?: T;
+  someGroup?:
+    | T
+    | {
+        disableListColumnTextInGroup?: T;
+      };
   updatedAt?: T;
   createdAt?: T;
   _status?: T;
@@ -820,6 +963,13 @@ export interface UsersSelect<T extends boolean = true> {
   hash?: T;
   loginAttempts?: T;
   lockUntil?: T;
+  sessions?:
+    | T
+    | {
+        id?: T;
+        createdAt?: T;
+        expiresAt?: T;
+      };
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -886,6 +1036,7 @@ export interface CustomFieldsSelect<T extends boolean = true> {
   descriptionAsComponent?: T;
   customSelectField?: T;
   customSelectInput?: T;
+  customMultiSelectField?: T;
   relationshipFieldWithBeforeAfterInputs?: T;
   arrayFieldWithBeforeAfterInputs?:
     | T
@@ -1003,6 +1154,18 @@ export interface EditMenuItemsSelect<T extends boolean = true> {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "format-doc-url_select".
+ */
+export interface FormatDocUrlSelect<T extends boolean = true> {
+  title?: T;
+  description?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  deletedAt?: T;
+  _status?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "base-list-filters_select".
  */
 export interface BaseListFiltersSelect<T extends boolean = true> {
@@ -1059,6 +1222,65 @@ export interface UseAsTitleGroupFieldSelect<T extends boolean = true> {
 export interface DisableBulkEditSelect<T extends boolean = true> {
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "custom-list-drawer_select".
+ */
+export interface CustomListDrawerSelect<T extends boolean = true> {
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "list-view-select-api_select".
+ */
+export interface ListViewSelectApiSelect<T extends boolean = true> {
+  title?: T;
+  description?: T;
+  group?:
+    | T
+    | {
+        groupNameField?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "virtuals_select".
+ */
+export interface VirtualsSelect<T extends boolean = true> {
+  virtualTitleFromPost?: T;
+  virtualText?: T;
+  post?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "no-timestamps_select".
+ */
+export interface NoTimestampsSelect<T extends boolean = true> {
+  title?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "localized_select".
+ */
+export interface LocalizedSelect<T extends boolean = true> {
+  title?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  _status?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-kv_select".
+ */
+export interface PayloadKvSelect<T extends boolean = true> {
+  key?: T;
+  data?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

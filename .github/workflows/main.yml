@@ -1,4 +1,4 @@
-name: build
+name: ci
 
 on:
   pull_request:
@@ -6,7 +6,6 @@ on:
       - opened
       - reopened
       - synchronize
-      - labeled
   push:
     branches:
       - main
@@ -17,8 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: 23.11.0
-  PNPM_VERSION: 9.7.1
   DO_NOT_TRACK: 1 # Disable Turbopack telemetry
   NEXT_TELEMETRY_DISABLED: 1 # Disable Next telemetry
 
@@ -36,7 +33,7 @@ jobs:
       - name: tune linux network
         run: sudo ethtool -K eth0 tx off rx off
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -65,16 +62,12 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Node setup
         uses: ./.github/actions/setup
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - name: Lint
         run: pnpm lint -- --quiet
@@ -85,14 +78,10 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Node setup
         uses: ./.github/actions/setup
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - run: pnpm run build:all
         env:
@@ -102,29 +91,26 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ./*
-          key: ${{ github.sha }}-${{ github.run_number }}
+          key: ${{ github.sha }}
 
   tests-unit:
     runs-on: ubuntu-24.04
     needs: [changes, build]
     if: ${{ needs.changes.outputs.needs_tests == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Node setup
         uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
           pnpm-run-install: false
           pnpm-restore-cache: false # Full build is restored below
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - name: Restore build
         uses: actions/cache@v4
         with:
           path: ./*
-          key: ${{ github.sha }}-${{ github.run_number }}
+          key: ${{ github.sha }}
 
       - name: Unit Tests
         run: pnpm test:unit
@@ -136,22 +122,19 @@ jobs:
     needs: [changes, build]
     if: ${{ needs.changes.outputs.needs_tests == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Node setup
         uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
           pnpm-run-install: false
           pnpm-restore-cache: false # Full build is restored below
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - name: Restore build
         uses: actions/cache@v4
         with:
           path: ./*
-          key: ${{ github.sha }}-${{ github.run_number }}
+          key: ${{ github.sha }}
 
       - name: Types Tests
         run: pnpm test:types --target '>=5.7'
@@ -169,6 +152,9 @@ jobs:
       matrix:
         database:
           - mongodb
+          - documentdb
+          - cosmosdb
+          - firestore
           - postgres
           - postgres-custom-schema
           - postgres-uuid
@@ -187,7 +173,8 @@ jobs:
 
     services:
       postgres:
-        image: ${{ (startsWith(matrix.database, 'postgres') ) && 'postgis/postgis:16-3.4' || '' }}
+        # Custom postgres 17 docker image that supports both pg-vector and postgis: https://github.com/payloadcms/postgis-vector
+        image: ${{ (startsWith(matrix.database, 'postgres') ) && 'ghcr.io/payloadcms/postgis-vector:latest' || '' }}
         env:
           # must specify password for PG Docker container image, see: https://registry.hub.docker.com/_/postgres?tab=description&page=1&name=10
           POSTGRES_USER: ${{ env.POSTGRES_USER }}
@@ -198,23 +185,27 @@ jobs:
         # needed because the postgres container does not provide a healthcheck
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
 
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+
+        options: --health-cmd "redis-cli ping" --health-timeout 30s --health-retries 3
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Node setup
         uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
           pnpm-run-install: false
           pnpm-restore-cache: false # Full build is restored below
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - name: Restore build
         uses: actions/cache@v4
         with:
           path: ./*
-          key: ${{ github.sha }}-${{ github.run_number }}
+          key: ${{ github.sha }}
 
       - name: Start LocalStack
         run: pnpm docker:start
@@ -247,6 +238,10 @@ jobs:
         run: |
           echo "POSTGRES_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres" >> $GITHUB_ENV
         if: matrix.database == 'supabase'
+
+      - name: Configure Redis
+        run: |
+          echo  "REDIS_URL=redis://127.0.0.1:6379" >> $GITHUB_ENV
 
       - name: Integration Tests
         run: pnpm test:int
@@ -301,7 +296,17 @@ jobs:
           - fields__collections__Text
           - fields__collections__UI
           - fields__collections__Upload
+          - fields__collections__UploadPoly
+          - fields__collections__UploadMultiPoly
+          - group-by
+          - folders
           - hooks
+          - lexical__collections___LexicalFullyFeatured
+          - lexical__collections___LexicalFullyFeatured__db
+          - lexical__collections__LexicalHeadingFeature
+          - lexical__collections__LexicalJSXConverter
+          - lexical__collections__LexicalLinkFeature
+          - lexical__collections__OnDemandForm
           - lexical__collections__Lexical__e2e__main
           - lexical__collections__Lexical__e2e__blocks
           - lexical__collections__Lexical__e2e__blocks#config.blockreferences.ts
@@ -315,30 +320,30 @@ jobs:
           - plugin-cloud-storage
           - plugin-form-builder
           - plugin-import-export
+          - plugin-multi-tenant
           - plugin-nested-docs
+          - plugin-redirects
           - plugin-seo
           - sort
+          - trash
           - versions
           - uploads
     env:
       SUITE_NAME: ${{ matrix.suite }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Node setup
         uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
           pnpm-run-install: false
           pnpm-restore-cache: false # Full build is restored below
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - name: Restore build
         uses: actions/cache@v4
         with:
           path: ./*
-          key: ${{ github.sha }}-${{ github.run_number }}
+          key: ${{ github.sha }}
 
       - name: Start LocalStack
         run: pnpm docker:start
@@ -360,7 +365,7 @@ jobs:
 
       - name: Setup Playwright - Browsers and Dependencies
         if: steps.cache-playwright-browsers.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium --no-shell
 
       - name: Setup Playwright - Dependencies-only
         if: steps.cache-playwright-browsers.outputs.cache-hit == 'true'
@@ -387,6 +392,7 @@ jobs:
       #     report-tag: ${{ matrix.suite }}
       #     job-summary: true
 
+  # This is unused, keeping it here for reference and possibly enabling in the future
   tests-e2e-turbo:
     runs-on: ubuntu-24.04
     needs: [changes, build]
@@ -437,7 +443,15 @@ jobs:
           - fields__collections__Text
           - fields__collections__UI
           - fields__collections__Upload
+          - group-by
+          - folders
           - hooks
+          - lexical__collections___LexicalFullyFeatured
+          - lexical__collections___LexicalFullyFeatured__db
+          - lexical__collections__LexicalHeadingFeature
+          - lexical__collections__LexicalJSXConverter
+          - lexical__collections__LexicalLinkFeature
+          - lexical__collections__OnDemandForm
           - lexical__collections__Lexical__e2e__main
           - lexical__collections__Lexical__e2e__blocks
           - lexical__collections__Lexical__e2e__blocks#config.blockreferences.ts
@@ -451,30 +465,29 @@ jobs:
           - plugin-cloud-storage
           - plugin-form-builder
           - plugin-import-export
+          - plugin-multi-tenant
           - plugin-nested-docs
           - plugin-seo
           - sort
+          - trash
           - versions
           - uploads
     env:
       SUITE_NAME: ${{ matrix.suite }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Node setup
         uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
           pnpm-run-install: false
           pnpm-restore-cache: false # Full build is restored below
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - name: Restore build
         uses: actions/cache@v4
         with:
           path: ./*
-          key: ${{ github.sha }}-${{ github.run_number }}
+          key: ${{ github.sha }}
 
       - name: Start LocalStack
         run: pnpm docker:start
@@ -526,7 +539,9 @@ jobs:
   # Build listed templates with packed local packages and then runs their int and e2e tests
   build-and-test-templates:
     runs-on: ubuntu-24.04
-    needs: build
+    needs: [changes, build]
+    if: ${{ needs.changes.outputs.needs_build == 'true' }}
+    name: build-template-${{ matrix.template }}-${{ matrix.database }}
     strategy:
       fail-fast: false
       matrix:
@@ -535,9 +550,6 @@ jobs:
             database: mongodb
 
           - template: website
-            database: mongodb
-
-          - template: with-payload-cloud
             database: mongodb
 
           - template: with-vercel-mongodb
@@ -556,8 +568,6 @@ jobs:
           # - template: with-vercel-website
           #   database: postgres
 
-    name: ${{ matrix.template }}-${{ matrix.database }}
-
     env:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -565,22 +575,19 @@ jobs:
       MONGODB_VERSION: 6.0
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Node setup
         uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
           pnpm-run-install: false
           pnpm-restore-cache: false # Full build is restored below
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - name: Restore build
         uses: actions/cache@v4
         with:
           path: ./*
-          key: ${{ github.sha }}-${{ github.run_number }}
+          key: ${{ github.sha }}
 
       - name: Start PostgreSQL
         uses: CasperWA/postgresql-action@v1.2
@@ -665,22 +672,19 @@ jobs:
     needs: [changes, build]
     if: ${{ needs.changes.outputs.needs_tests == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Node setup
         uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
           pnpm-run-install: false
           pnpm-restore-cache: false # Full build is restored below
-          pnpm-install-cache-key: pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       - name: Restore build
         uses: actions/cache@v4
         with:
           path: ./*
-          key: ${{ github.sha }}-${{ github.run_number }}
+          key: ${{ github.sha }}
 
       - name: Generate Payload Types
         run: pnpm dev:generate-types fields
@@ -718,3 +722,36 @@ jobs:
       - run: |
           echo github.ref: ${{ github.ref }}
           echo isV3: ${{ github.ref == 'refs/heads/main' }}
+  analyze:
+    runs-on: ubuntu-latest
+    needs: [changes, build]
+    timeout-minutes: 5
+    permissions:
+      contents: read # for checkout repository
+      actions: read # for fetching base branch bundle stats
+      pull-requests: write # for comments
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Node setup
+        uses: ./.github/actions/setup
+        with:
+          pnpm-run-install: false
+          pnpm-restore-cache: false # Full build is restored below
+
+      - name: Restore build
+        uses: actions/cache@v4
+        with:
+          path: ./*
+          key: ${{ github.sha }}
+
+      - run: pnpm run build:bundle-for-analysis # Esbuild packages that haven't already been built in the build step for the purpose of analyzing bundle size
+        env:
+          DO_NOT_TRACK: 1 # Disable Turbopack telemetry
+
+      - name: Analyze esbuild bundle size
+        # Temporarily disable this for community PRs until this can be implemented in a separate workflow
+        if: github.event.pull_request.head.repo.fork == false
+        uses: exoego/esbuild-bundle-analyzer@v1
+        with:
+          metafiles: 'packages/payload/meta_index.json,packages/payload/meta_shared.json,packages/ui/meta_client.json,packages/ui/meta_shared.json,packages/next/meta_index.json,packages/richtext-lexical/meta_client.json'

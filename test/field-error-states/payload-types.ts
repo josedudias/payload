@@ -74,6 +74,7 @@ export interface Config {
     'validate-drafts-on-autosave': ValidateDraftsOnAutosave;
     'prev-value': PrevValue;
     'prev-value-relation': PrevValueRelation;
+    'payload-kv': PayloadKv;
     users: User;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -88,6 +89,7 @@ export interface Config {
     'validate-drafts-on-autosave': ValidateDraftsOnAutosaveSelect<false> | ValidateDraftsOnAutosaveSelect<true>;
     'prev-value': PrevValueSelect<false> | PrevValueSelect<true>;
     'prev-value-relation': PrevValueRelationSelect<false> | PrevValueRelationSelect<true>;
+    'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     users: UsersSelect<false> | UsersSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -179,7 +181,7 @@ export interface ErrorField {
             root: {
               type: string;
               children: {
-                type: string;
+                type: any;
                 version: number;
                 [k: string]: unknown;
               }[];
@@ -232,7 +234,7 @@ export interface ErrorField {
           root: {
             type: string;
             children: {
-              type: string;
+              type: any;
               version: number;
               [k: string]: unknown;
             }[];
@@ -286,7 +288,7 @@ export interface ErrorField {
                 root: {
                   type: string;
                   children: {
-                    type: string;
+                    type: any;
                     version: number;
                     [k: string]: unknown;
                   }[];
@@ -330,6 +332,13 @@ export interface User {
   hash?: string | null;
   loginAttempts?: number | null;
   lockUntil?: string | null;
+  sessions?:
+    | {
+        id: string;
+        createdAt?: string | null;
+        expiresAt: string;
+      }[]
+    | null;
   password?: string | null;
 }
 /**
@@ -344,7 +353,7 @@ export interface Upload {
     root: {
       type: string;
       children: {
-        type: string;
+        type: any;
         version: number;
         [k: string]: unknown;
       }[];
@@ -374,6 +383,14 @@ export interface Upload {
 export interface ValidateDraftsOn {
   id: string;
   title: string;
+  /**
+   * Check this box to simulate a validation failure. The save button should remain enabled after the failure.
+   */
+  failValidation?: boolean | null;
+  /**
+   * This field will fail validation if "Fail Validation" checkbox is checked. This simulates validation failures from business logic, network errors, or third-party validation.
+   */
+  validatedField?: string | null;
   updatedAt: string;
   createdAt: string;
   _status?: ('draft' | 'published') | null;
@@ -385,6 +402,14 @@ export interface ValidateDraftsOn {
 export interface ValidateDraftsOff {
   id: string;
   title: string;
+  /**
+   * Check this box to simulate a validation failure. The save button should remain enabled after the failure.
+   */
+  failValidation?: boolean | null;
+  /**
+   * This field will fail validation if "Fail Validation" checkbox is checked. This simulates validation failures from business logic, network errors, or third-party validation.
+   */
+  validatedField?: string | null;
   updatedAt: string;
   createdAt: string;
   _status?: ('draft' | 'published') | null;
@@ -396,6 +421,14 @@ export interface ValidateDraftsOff {
 export interface ValidateDraftsOnAutosave {
   id: string;
   title: string;
+  /**
+   * Check this box to simulate a validation failure. The save button should remain enabled after the failure.
+   */
+  failValidation?: boolean | null;
+  /**
+   * This field will fail validation if "Fail Validation" checkbox is checked. This simulates validation failures from business logic, network errors, or third-party validation.
+   */
+  validatedField?: string | null;
   updatedAt: string;
   createdAt: string;
   _status?: ('draft' | 'published') | null;
@@ -420,6 +453,23 @@ export interface PrevValueRelation {
   previousValueRelation?: (string | null) | PrevValue;
   updatedAt: string;
   createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-kv".
+ */
+export interface PayloadKv {
+  id: string;
+  key: string;
+  data:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -650,6 +700,8 @@ export interface UploadsSelect<T extends boolean = true> {
  */
 export interface ValidateDraftsOnSelect<T extends boolean = true> {
   title?: T;
+  failValidation?: T;
+  validatedField?: T;
   updatedAt?: T;
   createdAt?: T;
   _status?: T;
@@ -660,6 +712,8 @@ export interface ValidateDraftsOnSelect<T extends boolean = true> {
  */
 export interface ValidateDraftsOffSelect<T extends boolean = true> {
   title?: T;
+  failValidation?: T;
+  validatedField?: T;
   updatedAt?: T;
   createdAt?: T;
   _status?: T;
@@ -670,6 +724,8 @@ export interface ValidateDraftsOffSelect<T extends boolean = true> {
  */
 export interface ValidateDraftsOnAutosaveSelect<T extends boolean = true> {
   title?: T;
+  failValidation?: T;
+  validatedField?: T;
   updatedAt?: T;
   createdAt?: T;
   _status?: T;
@@ -695,6 +751,14 @@ export interface PrevValueRelationSelect<T extends boolean = true> {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-kv_select".
+ */
+export interface PayloadKvSelect<T extends boolean = true> {
+  key?: T;
+  data?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "users_select".
  */
 export interface UsersSelect<T extends boolean = true> {
@@ -707,6 +771,13 @@ export interface UsersSelect<T extends boolean = true> {
   hash?: T;
   loginAttempts?: T;
   lockUntil?: T;
+  sessions?:
+    | T
+    | {
+        id?: T;
+        createdAt?: T;
+        expiresAt?: T;
+      };
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

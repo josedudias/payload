@@ -12,6 +12,7 @@ import { buildJoinAggregation } from './utilities/buildJoinAggregation.js'
 import { buildProjectionFromSelect } from './utilities/buildProjectionFromSelect.js'
 import { getCollection } from './utilities/getEntity.js'
 import { getSession } from './utilities/getSession.js'
+import { resolveJoins } from './utilities/resolveJoins.js'
 import { transform } from './utilities/transform.js'
 
 export const find: Find = async function find(
@@ -33,8 +34,6 @@ export const find: Find = async function find(
 ) {
   const { collectionConfig, Model } = getCollection({ adapter: this, collectionSlug })
 
-  const session = await getSession(this, req)
-
   let hasNearConstraint = false
 
   if (where) {
@@ -53,7 +52,7 @@ export const find: Find = async function find(
       locale,
       sort: sortArg || collectionConfig.defaultSort,
       sortAggregation,
-      timestamps: true,
+      timestamps: collectionConfig.timestamps || false,
     })
   }
 
@@ -64,6 +63,8 @@ export const find: Find = async function find(
     locale,
     where,
   })
+
+  const session = await getSession(this, req)
 
   // useEstimatedCount is faster, but not accurate, as it ignores any filters. It is thus set to true if there are no filters.
   const useEstimatedCount = hasNearConstraint || !query || Object.keys(query).length === 0
@@ -153,6 +154,16 @@ export const find: Find = async function find(
     })
   } else {
     result = await Model.paginate(query, paginationOptions)
+  }
+
+  if (!this.useJoinAggregations) {
+    await resolveJoins({
+      adapter: this,
+      collectionSlug,
+      docs: result.docs as Record<string, unknown>[],
+      joins,
+      locale,
+    })
   }
 
   transform({

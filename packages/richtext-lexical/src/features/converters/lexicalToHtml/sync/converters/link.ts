@@ -17,6 +17,7 @@ export const LinkHTMLConverter: (args: {
     }).join('')
 
     let href: string = node.fields.url ?? ''
+
     if (node.fields.linkType === 'internal') {
       if (internalDocToHref) {
         href = internalDocToHref({ linkNode: node })
@@ -26,6 +27,8 @@ export const LinkHTMLConverter: (args: {
         )
         href = '#' // fallback
       }
+    } else if (node.fields.linkType === 'upload' && node.fields.uploadFile) {
+      href = node.fields.uploadFile.url || '#'
     }
 
     return `<a${providedStyleTag} href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>${children}</a>`

@@ -16,12 +16,18 @@ export const LinkHTMLConverter: HTMLConverter<any> = {
     })
 
     let href: string =
-      node.fields.linkType === 'custom' ? node.fields.url : node.fields.doc?.value?.id
+      node.fields.linkType === 'custom'
+        ? node.fields.url
+        : node.fields.linkType === 'upload' && node.fields.uploadFile
+          ? node.fields.uploadFile.url
+          : node.fields.doc?.value?.id
 
     if (submissionData) {
       href = replaceDoubleCurlys(href, submissionData)
     }
-    return `<a href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''}>${childrenText}</a>`
+
+    return `<a href="${href}"${node.fields.newTab ? ' rel="noopener noreferrer" target="_blank"' : ''
+      }>${childrenText}</a>`
   },
   nodeTypes: ['link'],
 }

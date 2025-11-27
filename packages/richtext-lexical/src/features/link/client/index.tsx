@@ -27,6 +27,7 @@ export type ClientProps = {
   defaultLinkType?: string
   defaultLinkURL?: string
   disableAutoLinks?: 'creationOnly' | true
+  enabledUploadFileCollection?: string[]
 } & ExclusiveLinkCollectionsProps
 
 const toolbarGroups: ToolbarGroup[] = [
@@ -94,9 +95,9 @@ export const LinkFeatureClient = createClientFeature<ClientProps>(({ props }) =>
     props?.disableAutoLinks === true || props?.disableAutoLinks === 'creationOnly'
       ? null
       : {
-          Component: AutoLinkPlugin,
-          position: 'normal',
-        },
+        Component: AutoLinkPlugin,
+        position: 'normal',
+      },
     {
       Component: ClickableLinkPlugin,
       position: 'normal',

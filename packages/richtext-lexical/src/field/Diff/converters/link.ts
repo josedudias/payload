@@ -36,6 +36,7 @@ export const LinkDiffHTMLConverterAsync: (args: {
     ).join('')
 
     let href: string = node.fields.url ?? ''
+
     if (node.fields.linkType === 'internal') {
       if (internalDocToHref) {
         href = await internalDocToHref({ linkNode: node, populate })
@@ -45,6 +46,8 @@ export const LinkDiffHTMLConverterAsync: (args: {
         )
         href = '#' // fallback
       }
+    } else if (node.fields.linkType === 'upload' && node.fields.uploadFile) {
+      href = node.fields.uploadFile.url || '#'
     }
 
     // hash fields to ensure they are diffed if they change

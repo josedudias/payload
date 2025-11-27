@@ -27,6 +27,7 @@ export const LinkJSXConverter: (args: {
     const target: string | undefined = node.fields.newTab ? '_blank' : undefined
 
     let href: string = node.fields.url ?? ''
+
     if (node.fields.linkType === 'internal') {
       if (internalDocToHref) {
         href = internalDocToHref({ linkNode: node })
@@ -36,6 +37,8 @@ export const LinkJSXConverter: (args: {
         )
         href = '#' // fallback
       }
+    } else if (node.fields.linkType === 'upload' && node.fields.uploadFile) {
+      href = node.fields.uploadFile.url || '#'
     }
 
     return (

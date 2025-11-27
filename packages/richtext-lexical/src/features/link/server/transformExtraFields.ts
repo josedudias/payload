@@ -8,21 +8,23 @@ import { getBaseFields } from './baseFields.js'
 export function transformExtraFields(
   customFieldSchema:
     | ((args: {
-        config: SanitizedConfig
-        defaultFields: FieldAffectingData[]
-      }) => (Field | FieldAffectingData)[])
+      config: SanitizedConfig
+      defaultFields: FieldAffectingData[]
+    }) => (Field | FieldAffectingData)[])
     | Field[]
     | null,
   config: SanitizedConfig,
   enabledCollections?: CollectionSlug[],
   disabledCollections?: CollectionSlug[],
   maxDepth?: number,
+  enabledUploadFileCollection?: CollectionSlug[],
 ): Field[] {
   const baseFields: FieldAffectingData[] = getBaseFields(
     config,
     enabledCollections,
     disabledCollections,
     maxDepth,
+    enabledUploadFileCollection,
   )
 
   let fields: (Field | FieldAffectingData)[]
